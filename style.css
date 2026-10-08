@@ -1,0 +1,18 @@
+.child{
+    border: 2px solid purple;
+    width: 100px;
+    text-align: center;
+    /* vertical-align: middle; */
+    height: 100px;
+
+    
+}
+
+.parent{
+    border: 2px solid red;
+    display: flex;
+    flex-direction: column;
+    justify-content: start;
+    height: 200%;
+    
+}
