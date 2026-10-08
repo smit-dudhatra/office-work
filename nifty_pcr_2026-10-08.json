@@ -27526,5 +27526,116 @@
         "pcr": 0.1
       }
     ]
+  },
+  {
+    "timestamp": "2026-10-08T13:44:59+05:30",
+    "atm_strike": 22250,
+    "strikes": [
+      {
+        "strike": 21750,
+        "is_atm": false,
+        "pcr": 361.43
+      },
+      {
+        "strike": 21800,
+        "is_atm": false,
+        "pcr": 115.71
+      },
+      {
+        "strike": 21850,
+        "is_atm": false,
+        "pcr": 305.23
+      },
+      {
+        "strike": 21900,
+        "is_atm": false,
+        "pcr": 55.4
+      },
+      {
+        "strike": 21950,
+        "is_atm": false,
+        "pcr": 39.02
+      },
+      {
+        "strike": 22000,
+        "is_atm": false,
+        "pcr": 11.32
+      },
+      {
+        "strike": 22050,
+        "is_atm": false,
+        "pcr": 16.77
+      },
+      {
+        "strike": 22100,
+        "is_atm": false,
+        "pcr": 8.1
+      },
+      {
+        "strike": 22150,
+        "is_atm": false,
+        "pcr": 5.77
+      },
+      {
+        "strike": 22200,
+        "is_atm": false,
+        "pcr": 3.16
+      },
+      {
+        "strike": 22250,
+        "is_atm": true,
+        "pcr": 1.55
+      },
+      {
+        "strike": 22300,
+        "is_atm": false,
+        "pcr": 0.89
+      },
+      {
+        "strike": 22350,
+        "is_atm": false,
+        "pcr": 0.53
+      },
+      {
+        "strike": 22400,
+        "is_atm": false,
+        "pcr": 0.48
+      },
+      {
+        "strike": 22450,
+        "is_atm": false,
+        "pcr": 0.34
+      },
+      {
+        "strike": 22500,
+        "is_atm": false,
+        "pcr": 0.29
+      },
+      {
+        "strike": 22550,
+        "is_atm": false,
+        "pcr": 0.2
+      },
+      {
+        "strike": 22600,
+        "is_atm": false,
+        "pcr": 0.29
+      },
+      {
+        "strike": 22650,
+        "is_atm": false,
+        "pcr": 0.16
+      },
+      {
+        "strike": 22700,
+        "is_atm": false,
+        "pcr": 0.27
+      },
+      {
+        "strike": 22750,
+        "is_atm": false,
+        "pcr": 0.1
+      }
+    ]
   }
 ]
