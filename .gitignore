@@ -1,3 +1,6 @@
 /__pycache__
 /.env
 /logs
+*/node_modules
+nifty_pcr_2026-*
+nifty_expiry_*
