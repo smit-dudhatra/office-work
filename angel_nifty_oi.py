@@ -134,6 +134,7 @@ import time
 
 IST = timezone(timedelta(hours=5, minutes=30))
 MASTER_URL = 'https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json'
+MASTER_CACHE = Path(__file__).resolve().with_name('OpenAPIScripMaster.json')
 WS_URL = 'wss://smartapisocket.angelone.in/smart-stream'
 TOP_OI_COUNT = 3
 ENV_TEMPLATE = '''# Keep this file private. Do not commit it to Git.
@@ -289,6 +290,80 @@ def append_json_snapshot(path, snapshot):
         json.dump(history, output, indent=2)
         output.write('\n')
     os.replace(temporary, path)
+
+
+def load_instrument_master(cache_path, attempts=10):
+    """Return the scrip master, cached once per IST day.
+
+    Angel's server often drops the ~36 MB transfer midway, which makes a plain
+    GET raise ChunkedEncodingError. HTTP Range requests resume from the break;
+    only `attempts` consecutive tries without progress are fatal. A same-day
+    partial file left by an interrupted run is resumed too.
+    """
+    import requests
+
+    def written_today(path):
+        return (path.exists() and datetime.fromtimestamp(
+            path.stat().st_mtime, IST).date() == datetime.now(IST).date())
+
+    if written_today(cache_path):
+        try:
+            with cache_path.open('r', encoding='utf-8') as source:
+                rows = json.load(source)
+            if isinstance(rows, list):
+                return rows
+        except ValueError:
+            pass  # Corrupt cache: download again.
+    partial = cache_path.with_name(f'.{cache_path.name}.part')
+    received = partial.stat().st_size if written_today(partial) else 0
+    total, stalled = None, 0
+    while True:
+        before = received
+        # Identity encoding keeps byte offsets valid for Range resumption.
+        headers = {'Accept-Encoding': 'identity'}
+        if received:
+            headers['Range'] = f'bytes={received}-'
+        clean = False
+        try:
+            with requests.get(MASTER_URL, headers=headers, stream=True,
+                              timeout=(10, 60)) as response:
+                if response.status_code == 416:
+                    received = 0  # Partial is longer than the file; start over.
+                    continue
+                response.raise_for_status()
+                if response.status_code == 206:
+                    total = int(response.headers['Content-Range'].rsplit('/', 1)[1])
+                else:
+                    received = 0  # Full body sent (first try, or Range ignored).
+                    length = response.headers.get('Content-Length')
+                    total = int(length) if length else None
+                with partial.open('ab' if received else 'wb') as output:
+                    for chunk in response.iter_content(1 << 16):
+                        output.write(chunk)
+                        received += len(chunk)
+            clean = True
+        except (requests.ConnectionError, requests.Timeout,
+                requests.exceptions.ChunkedEncodingError):
+            pass
+        if (total is not None and received >= total) or (clean and total is None):
+            break
+        stalled = 0 if received > before else stalled + 1
+        if stalled >= attempts:
+            raise RuntimeError('Instrument master download kept failing. Check connectivity and retry.')
+        size = f' of {total / 1e6:.1f}' if total else ''
+        print(f'Instrument master download interrupted at {received / 1e6:.1f}{size} MB; '
+              'resuming...', flush=True)
+        time.sleep(min(2 ** stalled, 10))
+    try:
+        with partial.open('r', encoding='utf-8') as source:
+            rows = json.load(source)
+    except ValueError:
+        partial.unlink()
+        raise RuntimeError('Downloaded instrument master was corrupt; run again.') from None
+    if not isinstance(rows, list):
+        raise RuntimeError('Unexpected instrument master response.')
+    os.replace(partial, cache_path)
+    return rows
 
 
 def stream(strike_pairs, atm_strike, credentials, stop, session_day, print_interval,
@@ -582,7 +657,6 @@ def main():
         print(f'Created {args.env}. Fill in your credentials locally.')
         return
     try:
-        import requests
         import pyotp
         from dotenv import load_dotenv
         from SmartApi import SmartConnect
@@ -606,12 +680,8 @@ def main():
     jwt, feed = login.get('jwtToken'), api.getfeedToken()
     if not jwt or not feed:
         raise RuntimeError('Login did not return the required session/feed tokens.')
-    print('Logged in. Downloading instrument master...', flush=True)
-    response = requests.get(MASTER_URL, timeout=(10, 60))
-    response.raise_for_status()
-    rows = response.json()
-    if not isinstance(rows, list):
-        raise RuntimeError('Unexpected instrument master response.')
+    print('Logged in. Loading instrument master...', flush=True)
+    rows = load_instrument_master(MASTER_CACHE)
     indices = [r for r in rows if r.get('exch_seg') == 'NSE'
                and str(r.get('symbol', '')).upper() == 'NIFTY 50']
     if len(indices) != 1:

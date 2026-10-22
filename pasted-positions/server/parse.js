@@ -1,5 +1,6 @@
 import path from 'node:path';
 import * as XLSX from 'xlsx';
+import { htmlFills, sheetFills, workbookPalette } from './fills.js';
 
 /** Raised for bad input; the server turns it into a 400 with the message. */
 export class ParseError extends Error {}
@@ -21,15 +22,18 @@ const TOTAL_ROW_RE = /^(?:grand\s+)?totals?\s*:?$/i;
 
 /**
  * Parse text pasted from Excel (tab-separated) or a web page.
- * `html` is the clipboard's text/html, only used when the plain text has no tabs.
+ * `html` is the clipboard's text/html: the source of cell colours, and of the cells themselves
+ * when the plain text has no tabs.
  */
 export function parseText(text, html) {
   let grid = null;
   if (!text.includes('\t') && html && /<table/i.test(html)) grid = gridFromHtml(html);
   if (!grid?.length) grid = splitDelimited(text);
 
-  const table = normalizeTable(grid, 'Pasted');
+  const { fills, unmatched } = html ? htmlFills(html, grid) : {};
+  const table = normalizeTable(grid, 'Pasted', fills);
   if (!table) throw new ParseError('No data rows found. Copy the header row together with at least one row below it.');
+  if (unmatched) table.notes.push('Cell colours are not shown: they could not be matched to the pasted cells.');
   return { source: { kind: 'paste', name: 'Pasted data' }, sheets: [table] };
 }
 
@@ -47,12 +51,20 @@ export function parseFile(buffer, filename) {
   } else {
     let workbook;
     try {
-      workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true, dateNF: 'dd-mmm-yyyy' });
+      // cellStyles gives each cell's fill; bookFiles keeps styles.xml for the fills SheetJS can't resolve
+      workbook = XLSX.read(buffer, {
+        type: 'buffer', cellDates: true, dateNF: 'dd-mmm-yyyy', cellStyles: true, bookFiles: true,
+      });
     } catch {
       throw new ParseError('Could not read this file as a spreadsheet. Is it password-protected or corrupted?');
     }
+    const palette = workbookPalette(workbook);
     sheets = workbook.SheetNames
-      .map((name) => normalizeTable(sheetToGrid(workbook.Sheets[name]), name))
+      .map((name) => {
+        const sheet = workbook.Sheets[name];
+        const { grid, rowNumbers, range } = readSheet(sheet);
+        return normalizeTable(grid, name, range && sheetFills(sheet, rowNumbers, range, palette));
+      })
       .filter(Boolean);
   }
 
@@ -62,15 +74,53 @@ export function parseFile(buffer, filename) {
 
 // ------------------------------------------------------------- grid builders
 
-function sheetToGrid(sheet) {
-  // raw:false gives the text as Excel displays it, so number formats survive
-  return XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '', blankrows: false });
+function hasValue(cell) {
+  return Boolean(cell) && cell.t !== 'z' && cell.v != null;
+}
+
+/** Range of the cells that hold values; formatting alone can stretch a sheet's range to A1:XFD235. */
+function valueRange(sheet) {
+  let range = null;
+  const add = (r, c) => {
+    if (!range) range = { s: { r, c }, e: { r, c } };
+    range.s.r = Math.min(range.s.r, r);
+    range.s.c = Math.min(range.s.c, c);
+    range.e.r = Math.max(range.e.r, r);
+    range.e.c = Math.max(range.e.c, c);
+  };
+  if (sheet['!data']) {
+    sheet['!data'].forEach((row, r) => row?.forEach((cell, c) => hasValue(cell) && add(r, c)));
+  } else {
+    for (const key of Object.keys(sheet)) {
+      if (key[0] === '!' || !hasValue(sheet[key])) continue;
+      const { r, c } = XLSX.utils.decode_cell(key);
+      add(r, c);
+    }
+  }
+  return range;
+}
+
+/**
+ * The sheet's non-blank rows as display text, with the 0-based sheet row each one came from
+ * and the range that was read.
+ */
+function readSheet(sheet) {
+  const range = valueRange(sheet);
+  if (!range) return { grid: [], rowNumbers: [], range };
+  // raw:false gives the text as Excel displays it, so number formats survive.
+  // header:'A' keys cells by column letter (in column order); unlike header:1 it records __rowNum__.
+  const records = XLSX.utils.sheet_to_json(sheet, { header: 'A', range, raw: false, defval: '', blankrows: false });
+  return {
+    grid: records.map((record) => Object.values(record)),
+    rowNumbers: records.map((record) => record.__rowNum__),
+    range,
+  };
 }
 
 function gridFromHtml(html) {
   try {
     const workbook = XLSX.read(html, { type: 'string', raw: true });
-    return sheetToGrid(workbook.Sheets[workbook.SheetNames[0]]);
+    return readSheet(workbook.Sheets[workbook.SheetNames[0]]).grid;
   } catch {
     return null;
   }
@@ -198,13 +248,18 @@ function uniqueLabels(labels) {
 }
 
 /**
- * Turn a raw 2-D grid of cells into { name, columns, rows, notes }.
+ * Turn a raw 2-D grid of cells into { name, columns, rows, notes, fills? }.
  * Numeric columns hold numbers (or null), text columns hold strings.
+ * `fillGrid` (same shape as `grid`) holds cell background colours; the table gets `fills`, shaped
+ * like `rows`, only when a data cell has one.
  * Returns null when there are no data rows.
  */
-function normalizeTable(grid, name) {
+function normalizeTable(grid, name, fillGrid) {
   const notes = [];
-  let rows = grid.map((row) => (row ?? []).map(cellText)).filter((row) => row.some((cell) => cell !== ''));
+  let rows = grid.map((row) => (row ?? []).map(cellText));
+  // The grid row behind each table row, to look up its fills
+  let gridRows = rows.flatMap((row, r) => (row.some((cell) => cell !== '') ? [r] : []));
+  rows = gridRows.map((r) => rows[r]);
   if (!rows.length) return null;
 
   const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
@@ -218,6 +273,7 @@ function normalizeTable(grid, name) {
   if (start > 0) {
     notes.push(`Skipped ${start} line${start === 1 ? '' : 's'} above the table.`);
     rows = rows.slice(start);
+    gridRows = gridRows.slice(start);
   }
 
   // Drop columns that are empty everywhere
@@ -226,11 +282,13 @@ function normalizeTable(grid, name) {
 
   const hasHeader = rows[0].some((cell) => cell !== '' && parseNumber(cell) === null);
   const headerCells = hasHeader ? rows.shift() : [];
+  if (hasHeader) gridRows.shift();
   const labels = uniqueLabels(keep.map((_, i) => headerCells[i] || `Column ${i + 1}`));
 
-  const before = rows.length;
-  rows = rows.filter((row) => !TOTAL_ROW_RE.test(row.find((cell) => cell !== '') ?? ''));
-  const dropped = before - rows.length;
+  const isTotal = rows.map((row) => TOTAL_ROW_RE.test(row.find((cell) => cell !== '') ?? ''));
+  rows = rows.filter((_, i) => !isTotal[i]);
+  gridRows = gridRows.filter((_, i) => !isTotal[i]);
+  const dropped = isTotal.filter(Boolean).length;
   if (dropped) {
     notes.push(`Ignored ${dropped} "Total" row${dropped === 1 ? '' : 's'} from the input; totals are recalculated below.`);
   }
@@ -254,5 +312,8 @@ function normalizeTable(grid, name) {
     }),
   );
 
-  return { name, columns, rows: data, notes };
+  const table = { name, columns, rows: data, notes };
+  const fills = fillGrid && gridRows.map((r) => keep.map((c) => fillGrid[r]?.[c] ?? null));
+  if (fills?.some((row) => row.some(Boolean))) table.fills = fills;
+  return table;
 }

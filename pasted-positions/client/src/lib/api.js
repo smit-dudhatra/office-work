@@ -10,13 +10,26 @@ async function request(url, init) {
   return body;
 }
 
-/** Send pasted text; the HTML is only useful when there are no tabs (copied from a web page). */
+// The server takes up to 10 MB; past that, leave the HTML out (only cell colours are lost)
+const MAX_BODY_BYTES = 9.5 * 1024 * 1024;
+
+/** Send pasted text, plus the clipboard HTML when it holds a table: it carries the cell colours. */
 export function parseText(text, html) {
-  const sendHtml = !text.includes('\t') && /<table/i.test(html ?? '');
+  const withHtml = /<table/i.test(html ?? '') ? JSON.stringify({ text, html }) : null;
+  const body = withHtml && new Blob([withHtml]).size <= MAX_BODY_BYTES ? withHtml : JSON.stringify({ text });
   return request('/api/parse/text', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, html: sendHtml ? html : undefined }),
+    body,
+  });
+}
+
+/** Log the server in to Angel One with the current six-digit TOTP. */
+export function loginAngel(totp) {
+  return request('/api/angel/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ totp }),
   });
 }
 

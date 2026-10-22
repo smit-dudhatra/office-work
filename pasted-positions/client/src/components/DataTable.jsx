@@ -1,10 +1,67 @@
 import { useMemo, useState } from 'react';
 import { downloadFile, formatCell, isSignColored, isSummable, roundTo, signClass, toCsv } from '../lib/columns.js';
+import { fillStyle } from '../lib/fills.js';
+import { readPositions } from '../lib/positions.js';
+import { useLiveGreeks } from '../lib/useLiveGreeks.js';
+import DeltaSummary from './DeltaSummary.jsx';
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
+// Columns added to option positions: the side, then the live delta of the option and of the row
+const SIDE_COLUMN = { label: 'Side', type: 'text' };
+const DELTA_COLUMNS = [
+  { key: 'delta', label: 'Delta', type: 'number', decimals: 4 },
+  { key: 'qty', label: 'Delta (qty)', type: 'number', decimals: 2 },
+  { key: 'lots', label: 'Delta (lots)', type: 'number', decimals: 2 },
+];
+
 function isEmpty(value) {
   return value === null || value === '';
+}
+
+function sumOf(entries, key) {
+  const values = entries.map((entry) => entry[key]).filter((value) => value !== null);
+  return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
+}
+
+function LiveCells({ entry, onFlip }) {
+  if (!entry) {
+    return (
+      <>
+        <td />
+        {DELTA_COLUMNS.map((column) => <td key={column.key} className={column.key === 'lots' ? 'live-end' : undefined} />)}
+      </>
+    );
+  }
+  // Waiting for the first greeks, or Angel One doesn't list this option
+  const missing = entry.loaded ? '—' : '…';
+  return (
+    <>
+      <td>
+        <button
+          type="button"
+          className={`side-tag ${entry.buy ? 'is-buy' : 'is-sell'}${entry.flipped ? ' is-flipped' : ''}`}
+          onClick={onFlip}
+          title={
+            entry.flipped
+              ? 'Changed by you. Click to change back.'
+              : `From the row colour. Click to make it ${entry.buy ? 'SELL' : 'BUY'}.`
+          }
+        >
+          {entry.buy ? 'BUY' : 'SELL'}
+        </button>
+      </td>
+      {DELTA_COLUMNS.map((column) => (
+        <td
+          key={column.key}
+          className={column.key === 'lots' ? 'num live-end' : 'num'}
+          title={column.key === 'delta' && entry.iv ? `IV ${entry.iv.toFixed(2)}%` : undefined}
+        >
+          {entry[column.key] !== null ? formatCell(entry[column.key], column) : entry.qty === null ? missing : ''}
+        </td>
+      ))}
+    </>
+  );
 }
 
 function SortIcon({ dir }) {
@@ -17,12 +74,66 @@ function SortIcon({ dir }) {
 }
 
 export default function DataTable({ sheet, title, exportName, onClear }) {
-  const { columns, rows, notes } = sheet;
+  const { columns, rows, notes, fills } = sheet;
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState(null); // { index, dir: 'asc' | 'desc' }
 
   const colored = useMemo(() => columns.map(isSignColored), [columns]);
   const summable = useMemo(() => columns.map(isSummable), [columns]);
+
+  // Option positions with live deltas; null when the sheet isn't a list of options
+  const positions = useMemo(() => readPositions(sheet), [sheet]);
+  const expiries = useMemo(
+    () => [...new Set((positions ?? []).filter(Boolean).map((position) => position.expiry))].sort(),
+    [positions],
+  );
+  const live = useLiveGreeks(expiries);
+  const [flipped, setFlipped] = useState(() => new Set()); // row numbers whose side was changed by hand
+
+  const deltas = useMemo(
+    () =>
+      positions?.map((position, i) => {
+        if (!position) return null;
+        const isFlipped = flipped.has(i + 1);
+        const buy = position.buy !== isFlipped;
+        const chain = live.greeks[position.expiry];
+        const quote = chain?.strikes[`${position.strike}${position.type}`];
+        const qty = quote ? (buy ? 1 : -1) * quote.delta * position.quantity : null;
+        return {
+          buy,
+          flipped: isFlipped,
+          loaded: Boolean(chain),
+          delta: quote?.delta ?? null,
+          iv: quote?.iv ?? null,
+          qty,
+          lots: qty !== null && position.lotSize ? qty / position.lotSize : null,
+        };
+      }) ?? null,
+    [positions, flipped, live.greeks],
+  );
+
+  // Net delta of every position, whatever the filter
+  const net = useMemo(() => {
+    if (!deltas) return null;
+    const entries = deltas.filter(Boolean);
+    return {
+      qty: sumOf(entries, 'qty'),
+      lots: sumOf(entries, 'lots'),
+      missing: entries.filter((entry) => entry.loaded && entry.qty === null).length,
+      buys: entries.filter((entry) => entry.buy).length,
+      sells: entries.filter((entry) => !entry.buy).length,
+    };
+  }, [deltas]);
+  // The oldest of the expiries' updates
+  const updatedAt = expiries.map((expiry) => live.greeks[expiry]?.fetchedAt).filter(Boolean).sort()[0];
+
+  function flipSide(n) {
+    setFlipped((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(n)) next.add(n);
+      return next;
+    });
+  }
 
   // Search matches the raw value and the formatted one ("1234.5" and "1,234.50")
   const searchText = useMemo(
@@ -63,7 +174,11 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
       ),
     [columns, summable, visible],
   );
-  const showTotals = summable.some(Boolean) && visible.length > 0;
+  const visibleDeltas = useMemo(
+    () => (deltas ? visible.map(({ n }) => deltas[n - 1]).filter(Boolean) : []),
+    [deltas, visible],
+  );
+  const showTotals = (summable.some(Boolean) || Boolean(deltas)) && visible.length > 0;
 
   function toggleSort(index) {
     setSort((prev) => {
@@ -73,7 +188,16 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
   }
 
   function exportCsv() {
-    downloadFile(`${exportName}.csv`, toCsv(columns, visible.map(({ row }) => row)));
+    if (!deltas) {
+      downloadFile(`${exportName}.csv`, toCsv(columns, visible.map(({ row }) => row)));
+      return;
+    }
+    // Same order as the table: side and deltas first
+    const csvRows = visible.map(({ row, n }) => {
+      const entry = deltas[n - 1];
+      return [entry ? (entry.buy ? 'BUY' : 'SELL') : '', ...DELTA_COLUMNS.map((c) => entry?.[c.key] ?? null), ...row];
+    });
+    downloadFile(`${exportName}.csv`, toCsv([SIDE_COLUMN, ...DELTA_COLUMNS, ...columns], csvRows));
   }
 
   const countLabel =
@@ -106,6 +230,8 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
         </div>
       </div>
 
+      {net && <DeltaSummary net={net} live={live} updatedAt={updatedAt} />}
+
       {notes.length > 0 && (
         <ul className="notes">
           {notes.map((note) => <li key={note}>{note}</li>)}
@@ -117,6 +243,21 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
           <thead>
             <tr>
               <th className="col-index" scope="col">#</th>
+              {/* Live columns come first so they stay in view on wide sheets */}
+              {deltas && (
+                <>
+                  <th scope="col" className="col-live">{SIDE_COLUMN.label}</th>
+                  {DELTA_COLUMNS.map((column) => (
+                    <th
+                      key={column.key}
+                      scope="col"
+                      className={column.key === 'lots' ? 'num col-live live-end' : 'num col-live'}
+                    >
+                      {column.label}
+                    </th>
+                  ))}
+                </>
+              )}
               {columns.map((column, i) => {
                 const dir = sort?.index === i ? sort.dir : null;
                 return (
@@ -139,11 +280,18 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
             {visible.map(({ row, n }) => (
               <tr key={n}>
                 <td className="col-index">{n}</td>
+                {deltas && <LiveCells entry={deltas[n - 1]} onFlip={() => flipSide(n)} />}
                 {row.map((value, i) => {
                   const numeric = columns[i].type === 'number';
-                  const className = numeric ? `num ${colored[i] ? signClass(value) : ''}` : 'text';
+                  const sign = numeric && colored[i] ? signClass(value) : '';
+                  const className = numeric ? `num ${sign}` : 'text';
+                  const fill = fills?.[n - 1][i];
                   return (
-                    <td key={columns[i].label} className={className.trim()}>
+                    <td
+                      key={columns[i].label}
+                      className={className.trim()}
+                      style={fill ? fillStyle(fill, sign) : undefined}
+                    >
                       {formatCell(value, columns[i])}
                     </td>
                   );
@@ -155,6 +303,20 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
             <tfoot>
               <tr>
                 <th className="col-index" scope="row">Total</th>
+                {deltas && (
+                  <>
+                    <td />
+                    {DELTA_COLUMNS.map((column) => {
+                      // A row's option delta doesn't add up; its quantity and lots do
+                      const total = column.key === 'delta' ? null : sumOf(visibleDeltas, column.key);
+                      return (
+                        <td key={column.key} className={column.key === 'lots' ? 'num live-end' : 'num'}>
+                          {total === null ? '' : formatCell(total, column)}
+                        </td>
+                      );
+                    })}
+                  </>
+                )}
                 {columns.map((column, i) => {
                   const total = totals[i];
                   if (total === null) return <td key={column.label} />;

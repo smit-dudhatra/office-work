@@ -370,6 +370,127 @@ kbd {
   font-size: 13px;
 }
 
+/* -------------------------------------------------------------- live delta */
+
+.delta-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 24px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.delta-figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin: 0;
+}
+
+.delta-figures dt {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.delta-figures dd {
+  margin: 2px 0 0;
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.delta-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.status-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.status-dot.is-live {
+  background: var(--pos);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pos) 25%, transparent);
+}
+
+.status-dot.is-error,
+.status-dot.is-offline,
+.status-dot.is-needs-login {
+  background: var(--neg);
+}
+
+.totp-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.search.totp-input {
+  width: 120px;
+  padding: 4px 10px;
+  letter-spacing: 0.15em;
+  font-variant-numeric: tabular-nums;
+}
+
+.totp-error {
+  color: var(--danger-text);
+}
+
+.delta-note {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.side-tag {
+  appearance: none;
+  min-width: 46px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.side-tag.is-buy {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.side-tag.is-sell {
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+/* Changed by hand, not from the row colour */
+.side-tag.is-flipped {
+  border-style: dashed;
+  border-color: currentColor;
+}
+
+thead th.col-live {
+  padding: 9px 12px;
+}
+
+/* Separates the live columns from the pasted ones */
+.live-end {
+  border-right: 1px solid var(--border-strong);
+}
+
 /* -------------------------------------------------------------------- table */
 
 .table-scroll {

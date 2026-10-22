@@ -12,6 +12,22 @@ function hasDropPayload(event) {
   return types.includes('Files') || types.includes('text/plain');
 }
 
+/** Clipboard text, and its HTML (which carries cell colours) where the browser lets us read it. */
+async function readClipboard() {
+  try {
+    // Unsanitized: the same HTML a Ctrl+V paste gets, with Excel's <style> block intact
+    const items = await navigator.clipboard.read({ unsanitized: ['text/html'] });
+    const item = items.find((entry) => entry.types.includes('text/plain'));
+    if (item) {
+      const read = async (type) => (item.types.includes(type) ? (await item.getType(type)).text() : '');
+      return { text: await read('text/plain'), html: await read('text/html') };
+    }
+  } catch {
+    // Older browsers can only read plain text
+  }
+  return { text: await navigator.clipboard.readText(), html: '' };
+}
+
 function timeLabel(date) {
   return date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
@@ -120,18 +136,18 @@ export default function App() {
   }, [handleText, handleFile]);
 
   async function pasteFromClipboard() {
-    let text;
+    let clipboard;
     try {
-      text = await navigator.clipboard.readText();
+      clipboard = await readClipboard();
     } catch {
       setError('The browser blocked clipboard access. Press Ctrl+V on the page instead.');
       return;
     }
-    if (!text.trim()) {
+    if (!clipboard.text.trim()) {
       setError('The clipboard is empty. Copy some cells first.');
       return;
     }
-    handleText(text);
+    handleText(clipboard.text, clipboard.html);
   }
 
   function clear() {

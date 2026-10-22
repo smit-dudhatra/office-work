@@ -4,3 +4,5 @@
 */node_modules
 nifty_pcr_2026-*
 nifty_expiry_*
+/OpenAPIScripMaster.json
+/.OpenAPIScripMaster.json.part
