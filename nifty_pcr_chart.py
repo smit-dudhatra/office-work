@@ -16,9 +16,9 @@ Follow today's automatically dated file:
 
 Open one exact daily file:
 
-  python nifty_pcr_chart.py --file nifty_pcr_2026-10-05.json
+  python nifty_pcr_chart.py --file "oi_data/2026/10 - October/05 - Monday/nifty_pcr.json"
 
-Open a date derived from the default base filename:
+Open a date derived from the default base path:
 
   python nifty_pcr_chart.py --date 2026-10-05
 
@@ -30,7 +30,8 @@ File selection
 --------------
 By default, the viewer looks beside this script for:
 
-  nifty_pcr_YYYY-MM-DD.json
+  oi_data/YYYY/MM - Month/DD - Weekday/nifty_pcr.json
+  e.g. oi_data/2026/10 - October/05 - Monday/nifty_pcr.json
 
 The date is today's IST date and changes automatically after midnight. If the file
 does not exist yet, the window stays open and waits for it. --date fixes the date
@@ -80,8 +81,9 @@ The chart redraws when the window is resized.
 Command-line configuration
 --------------------------
 --json-file PATH
-    Base filename used by angel_nifty_oi.py. The selected IST date is inserted
-    before the suffix. Default: nifty_pcr.json beside this script.
+    Base path used by angel_nifty_oi.py. Year, month, and day folders for the
+    selected IST date are inserted before the filename. Default:
+    oi_data/nifty_pcr.json beside this script.
 --file PATH
     Exact dated JSON file to watch. Mutually exclusive with --json-file.
 --date YYYY-MM-DD
@@ -102,7 +104,7 @@ Examples
   python nifty_pcr_chart.py --refresh-seconds 1
   python nifty_pcr_chart.py --pcr-min 0.75 --pcr-max 1.50
   python nifty_pcr_chart.py --date 2026-10-05
-  python nifty_pcr_chart.py --file data/nifty_history_2026-10-05.json
+  python nifty_pcr_chart.py --file "data/2026/10 - October/05 - Monday/nifty_history.json"
 """
 
 import argparse
@@ -139,9 +141,10 @@ def finite_float(value):
 
 
 def dated_json_path(base_path, session_day):
-    suffix = base_path.suffix or '.json'
-    stem = base_path.stem if base_path.suffix else base_path.name
-    return base_path.with_name(f'{stem}_{session_day:%Y-%m-%d}{suffix}')
+    """oi_data/nifty_pcr.json -> oi_data/2026/10 - October/05 - Monday/nifty_pcr.json"""
+    name = base_path.name if base_path.suffix else f'{base_path.name}.json'
+    return (base_path.parent / f'{session_day:%Y}' / f'{session_day:%m - %B}'
+            / f'{session_day:%d - %A}' / name)
 
 
 def parse_snapshots(raw):
@@ -459,8 +462,8 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     source = parser.add_mutually_exclusive_group()
     source.add_argument('--json-file', type=Path,
-                        default=Path(__file__).resolve().with_name('nifty_pcr.json'),
-                        help='base JSON filename used by angel_nifty_oi.py')
+                        default=Path(__file__).resolve().parent / 'oi_data' / 'nifty_pcr.json',
+                        help='base JSON path used by angel_nifty_oi.py')
     source.add_argument('--file', type=Path,
                         help='exact dated JSON file to watch')
     parser.add_argument('--date', type=date.fromisoformat,

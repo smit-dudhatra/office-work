@@ -65,9 +65,10 @@ startup. The latest cached OI is used at each boundary.
 
 Daily JSON storage
 ------------------
---json-file is a base path. The IST trading date is inserted before its suffix:
+--json-file is a base path. Year, month, and day folders for the IST trading date
+are inserted between its folder and its filename (created as needed):
 
-  nifty_pcr.json -> nifty_pcr_2026-10-05.json
+  oi_data/nifty_pcr.json -> oi_data/2026/10 - October/05 - Monday/nifty_pcr.json
 
 Restarting during the same day reads and appends to that day's JSON array. A new
 date uses a new file, preserving earlier days. Writes use a temporary file and an
@@ -94,8 +95,8 @@ Command-line configuration
 --strikes-each-side COUNT, --strikes COUNT
     Listed strikes below and above ATM. Default: 5.
 --json-file PATH
-    Base JSON filename; the date is inserted automatically. Default:
-    nifty_pcr.json beside this script.
+    Base JSON path; dated folders are inserted automatically. Default:
+    oi_data/nifty_pcr.json beside this script.
 --init-env
     Create the environment template without overwriting an existing file.
 --self-test
@@ -107,6 +108,7 @@ Examples
   python angel_nifty_oi.py --strikes 3 --interval 1
   python angel_nifty_oi.py --strike-interval 2 --expiry 2026-10-08
   python angel_nifty_oi.py --json-file data/nifty_history.json
+      (writes data/2026/10 - October/05 - Monday/nifty_history.json)
 
 Operational notes
 -----------------
@@ -269,9 +271,10 @@ def format_oi_ranking(stamp, label, ranking):
 
 
 def dated_json_path(base_path, session_day):
-    suffix = base_path.suffix or '.json'
-    stem = base_path.stem if base_path.suffix else base_path.name
-    return base_path.with_name(f'{stem}_{session_day:%Y-%m-%d}{suffix}')
+    """oi_data/nifty_pcr.json -> oi_data/2026/10 - October/05 - Monday/nifty_pcr.json"""
+    name = base_path.name if base_path.suffix else f'{base_path.name}.json'
+    return (base_path.parent / f'{session_day:%Y}' / f'{session_day:%m - %B}'
+            / f'{session_day:%d - %A}' / name)
 
 
 def append_json_snapshot(path, snapshot):
@@ -598,10 +601,10 @@ def self_test():
         2026, 10, 5, 9, 16, 59, tzinfo=IST)
     assert next_snapshot_time(scheduled_from.replace(minute=1), 300) == datetime(
         2026, 10, 5, 9, 4, 59, tzinfo=IST)
-    assert dated_json_path(Path('nifty_pcr.json'), before.date()) == Path(
-        'nifty_pcr_2026-10-05.json')
+    assert dated_json_path(Path('oi_data/nifty_pcr.json'), before.date()) == Path(
+        'oi_data/2026/10 - October/05 - Monday/nifty_pcr.json')
     assert dated_json_path(Path('history'), before.date()) == Path(
-        'history_2026-10-05.json')
+        '2026/10 - October/05 - Monday/history.json')
     oi_sample = {
         Decimal('25000'): {'CE': 300, 'PE': 100},
         Decimal('25050'): {'CE': 100, 'PE': 200},
@@ -642,8 +645,8 @@ def main():
                         type=nonnegative_integer, default=10,
                         help='listed strikes above and below ATM to track (default: 5)')
     parser.add_argument('--json-file', type=Path,
-                        default=Path(__file__).resolve().with_name('nifty_pcr.json'),
-                        help='base snapshot filename; date is added automatically')
+                        default=Path(__file__).resolve().parent / 'oi_data' / 'nifty_pcr.json',
+                        help='base snapshot path; dated year/month/day folders are added automatically')
     parser.add_argument('--init-env', action='store_true')
     parser.add_argument('--self-test', action='store_true')
     args = parser.parse_args()

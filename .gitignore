@@ -3,6 +3,8 @@
 /logs
 */node_modules
 nifty_pcr_2026-*
+/oi_data
 nifty_expiry_*
 /OpenAPIScripMaster.json
 /.OpenAPIScripMaster.json.part
+*/target
