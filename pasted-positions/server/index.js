@@ -4,8 +4,10 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import multer from 'multer';
 import { AngelError, login } from './angel.js';
+import { refreshDaily, streamDaily } from './daily.js';
 import { refreshGreeks, streamGreeks } from './greeks.js';
 import { ParseError, parseFile, parseText } from './parse.js';
+import { reconnect } from './feed.js';
 
 const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST_DIR = path.join(APP_DIR, 'dist');
@@ -41,6 +43,7 @@ app.post('/api/parse/file', upload.single('file'), (req, res) => {
 });
 
 app.get('/api/greeks/stream', streamGreeks);
+app.get('/api/daily/stream', streamDaily);
 
 app.post('/api/angel/login', express.json(), async (req, res) => {
   // Failed logins count against the Angel account, so only accept them from this computer
@@ -48,7 +51,9 @@ app.post('/api/angel/login', express.json(), async (req, res) => {
     return res.status(403).json({ error: 'Log in from the computer running the server.' });
   }
   await login(String(req.body?.totp ?? '').trim());
+  reconnect();
   refreshGreeks();
+  refreshDaily();
   res.json({ ok: true });
 });
 

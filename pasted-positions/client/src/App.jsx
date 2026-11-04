@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import DailyAnalysis from './components/DailyAnalysis.jsx';
 import DataTable from './components/DataTable.jsx';
 import Dropzone from './components/Dropzone.jsx';
+import LoginBanner from './components/LoginBanner.jsx';
 import { parseFile, parseText } from './lib/api.js';
 
 function isEditable(target) {
@@ -171,6 +173,8 @@ export default function App() {
         <p>Paste a block of cells copied from Excel or a web page, or drop a spreadsheet, to see it as a table.</p>
       </header>
 
+      <LoginBanner />
+
       <Dropzone
         compact={Boolean(result)}
         dragging={dragging}
@@ -187,6 +191,8 @@ export default function App() {
           </button>
         </div>
       )}
+
+      <DailyAnalysis />
 
       {result && sheet && (
         <section className="results" aria-label="Parsed data">

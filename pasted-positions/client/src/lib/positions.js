@@ -1,8 +1,15 @@
 // Option positions in a pasted sheet: the columns holding expiry, strike, CE / PE and quantity,
-// and the side of each row (BUY when most of the row is filled yellow, SELL otherwise).
+// the side of each row (BUY when most of the row is filled yellow, SELL otherwise) and, for live P&L,
+// the Buy Price / Sell Price columns. A BUY's entry is its buy price and a SELL's its sell price; the other
+// price column is where the live LTP goes.
 
 const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 const OPTION_TYPES = { CE: 'CE', CALL: 'CE', PE: 'PE', PUT: 'PE' };
+const PRICE_WORD = '(?:price|avg|average|rate)';
+const sidePriceRe = (side) => new RegExp(`\\b${side}\\b.*\\b${PRICE_WORD}\\b|\\b${PRICE_WORD}\\b.*\\b${side}\\b`, 'i');
+const BUY_PRICE_RE = sidePriceRe('buy');
+const SELL_PRICE_RE = sidePriceRe('sell');
+const PNL_COLUMN_RE = /^(?:p\s*[&/]\s*l|pnl)$/i;
 
 function validDate(year, month, day) {
   const date = new Date(Date.UTC(year, month, day));
@@ -76,18 +83,38 @@ function findColumns(columns, rows) {
     quantity: byLabel(/^(?:total\s*lot\s*size|qty|quantity|net\s*qty)$/i),
     lotSize: byLabel(/^lot\s*size$/i),
     lots: byLabel(/^(?:no\.?\s*(?:of\s*)?lots?|lots)$/i),
+    buyPrice: byLabel(BUY_PRICE_RE),
+    sellPrice: byLabel(SELL_PRICE_RE),
+    pnl: byLabel(PNL_COLUMN_RE),
   };
 }
 
 /**
- * Positions for the rows of a sheet, or null when it doesn't look like a list of options.
- * Each entry is { expiry, strike, type, quantity, lotSize, buy } or null for a row that isn't a position.
+ * Profit or loss of a position at `ltp` (null when the entry price or the LTP is missing).
+ * `buy` is the side to use, which may differ from `position.buy` when the user flipped the row.
+ */
+export function pnlAt(position, buy, ltp) {
+  const entry = buy ? position.buyPrice : position.sellPrice;
+  if (entry === null || ltp === null) return null;
+  return (buy ? ltp - entry : entry - ltp) * position.quantity;
+}
+
+/**
+ * The positions in a sheet, or null when it doesn't look like a list of options:
+ * { positions, prices }. `positions` has an entry per row, { expiry, strike, type, quantity, lotSize, buy,
+ * buyPrice, sellPrice }, or null for a row that isn't a position. `prices` is { buy, sell, pnl } (column
+ * indexes; pnl is null without a P&L column), or null when the sheet has no Buy Price and Sell Price columns.
  */
 export function readPositions(sheet) {
   const { columns, rows, fills } = sheet;
   const col = findColumns(columns, rows);
   const hasQuantity = col.quantity >= 0 || (col.lots >= 0 && col.lotSize >= 0);
   if (col.expiry < 0 || col.strike < 0 || col.optionType < 0 || !hasQuantity) return null;
+  const prices =
+    col.buyPrice >= 0 && col.sellPrice >= 0
+      ? { buy: col.buyPrice, sell: col.sellPrice, pnl: col.pnl >= 0 ? col.pnl : null }
+      : null;
+  const priceAt = (row, index) => (prices && Number.isFinite(row[index]) ? row[index] : null);
 
   const positions = rows.map((row, i) => {
     const expiry = expiryCode(row[col.expiry]);
@@ -97,7 +124,16 @@ export function readPositions(sheet) {
     const quantity = col.quantity >= 0 ? row[col.quantity] : row[col.lots] * lotSize;
     if (!expiry || !type || !Number.isFinite(strike) || !Number.isFinite(quantity) || !quantity) return null;
     const yellow = (fills?.[i] ?? []).filter((fill) => fill && isYellow(fill)).length;
-    return { expiry, strike, type, quantity: Math.abs(quantity), lotSize: lotSize || null, buy: yellow * 2 > row.length };
+    return {
+      expiry,
+      strike,
+      type,
+      quantity: Math.abs(quantity),
+      lotSize: lotSize || null,
+      buy: yellow * 2 > row.length,
+      buyPrice: priceAt(row, col.buyPrice),
+      sellPrice: priceAt(row, col.sellPrice),
+    };
   });
-  return positions.some(Boolean) ? positions : null;
+  return positions.some(Boolean) ? { positions, prices } : null;
 }

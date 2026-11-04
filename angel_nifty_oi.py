@@ -26,7 +26,7 @@ Market and strike selection
 ---------------------------
 The script downloads the Angel One instrument master and resolves NIFTY 50 spot.
 Unless --expiry is supplied, it uses the nearest unexpired NIFTY option expiry.
-An expiry on the current day is excluded from 15:30 IST onward. Only listed
+An expiry on the current day is excluded from 15:40 IST onward. Only listed
 strikes having both CE and PE contracts are eligible.
 
 ATM is the eligible strike nearest to the latest NIFTY spot price. An exact
@@ -165,7 +165,7 @@ def select_strikes(rows, spot, now, strikes_each_side, requested_expiry=None):
         except (KeyError, ValueError, ArithmeticError):
             continue
         if (expiry < now.date() or
-                (expiry == now.date() and now.time() >= clock_time(15, 30))):
+                (expiry == now.date() and now.time() >= clock_time(15, 40))):
             continue
         if requested_expiry and expiry != requested_expiry:
             continue

@@ -21,6 +21,11 @@
   --radius: 10px;
   --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --mono: ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', Consolas, monospace;
+  /* Status tags of the daily analysis (white text on up / down, dark on warn), same in both themes */
+  --tag-up: #17793f;
+  --tag-down: #c22a2a;
+  --tag-warn: #f2c14e;
+  --tag-warn-text: #3d2c00;
   color-scheme: light;
 }
 
@@ -482,6 +487,12 @@ kbd {
   border-color: currentColor;
 }
 
+/* A price from the live feed, not the pasted sheet */
+td.is-live-ltp {
+  font-style: italic;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
 thead th.col-live {
   padding: 9px 12px;
 }
@@ -489,6 +500,130 @@ thead th.col-live {
 /* Separates the live columns from the pasted ones */
 .live-end {
   border-right: 1px solid var(--border-strong);
+}
+
+/* ------------------------------------------------------------ login banner */
+
+.login-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 14px;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: var(--radius);
+  font-size: 14px;
+}
+
+.login-banner-text {
+  font-weight: 550;
+}
+
+/* Upstox is filling in, so this is a reminder rather than a blocker */
+.login-banner.is-fallback {
+  padding: 6px 12px;
+  background: var(--surface);
+  border-color: var(--border);
+  font-size: 13px;
+}
+
+.login-banner.is-fallback .login-banner-text {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+/* ----------------------------------------------------------- daily analysis */
+
+.daily-card {
+  justify-self: start;
+  max-width: 100%;
+}
+
+.daily-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 24px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.daily-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.daily-price {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.daily-ltp {
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.daily-bias {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.daily-bias-counts {
+  color: var(--text-muted);
+}
+
+.daily-toggle {
+  margin-left: auto;
+}
+
+.daily-table thead th {
+  position: static;
+  padding: 9px 12px;
+}
+
+.daily-table tbody th {
+  font-weight: 500;
+}
+
+.daily-table .daily-status {
+  text-align: center;
+}
+
+.daily-tag {
+  display: inline-block;
+  min-width: 64px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.daily-tag.is-up {
+  background: var(--tag-up);
+  color: #ffffff;
+}
+
+.daily-tag.is-down {
+  background: var(--tag-down);
+  color: #ffffff;
+}
+
+.daily-tag.is-warn {
+  background: var(--tag-warn);
+  color: var(--tag-warn-text);
+}
+
+.daily-tag.is-muted {
+  background: var(--surface-2);
+  color: var(--text-muted);
 }
 
 /* -------------------------------------------------------------------- table */

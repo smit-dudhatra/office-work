@@ -1,19 +1,21 @@
 import { useMemo, useState } from 'react';
 import { downloadFile, formatCell, isSignColored, isSummable, roundTo, signClass, toCsv } from '../lib/columns.js';
 import { fillStyle } from '../lib/fills.js';
-import { readPositions } from '../lib/positions.js';
+import { pnlAt, readPositions } from '../lib/positions.js';
+import { useLoginReport } from '../lib/angelLogin.js';
 import { useLiveGreeks } from '../lib/useLiveGreeks.js';
 import DeltaSummary from './DeltaSummary.jsx';
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
-// Columns added to option positions: the side, then the live delta of the option and of the row
+// Columns added to option positions: the side, the live delta of the option and of the row, and the P&L
 const SIDE_COLUMN = { label: 'Side', type: 'text' };
 const DELTA_COLUMNS = [
   { key: 'delta', label: 'Delta', type: 'number', decimals: 4 },
   { key: 'qty', label: 'Delta (qty)', type: 'number', decimals: 2 },
   { key: 'lots', label: 'Delta (lots)', type: 'number', decimals: 2 },
 ];
+const PNL_COLUMN = { key: 'pnl', label: 'Live P&L', type: 'number', decimals: 2 };
 
 function isEmpty(value) {
   return value === null || value === '';
@@ -24,17 +26,28 @@ function sumOf(entries, key) {
   return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
 }
 
-function LiveCells({ entry, onFlip }) {
+/** A cell value the live feed has replaced (LTP, P&L) is shown to at least the paise. */
+function liveFormat(column) {
+  return { ...column, decimals: Math.max(column.decimals, 2) };
+}
+
+/** What a cell shows: the live value where the feed has replaced the pasted one. */
+function valueAt(rows, deltas, n, i) {
+  return deltas?.[n - 1]?.overrides[i] ?? rows[n - 1][i];
+}
+
+function LiveCells({ entry, columns, onFlip }) {
+  const lastKey = columns[columns.length - 1].key;
   if (!entry) {
     return (
       <>
         <td />
-        {DELTA_COLUMNS.map((column) => <td key={column.key} className={column.key === 'lots' ? 'live-end' : undefined} />)}
+        {columns.map((column) => <td key={column.key} className={column.key === lastKey ? 'live-end' : undefined} />)}
       </>
     );
   }
-  // Waiting for the first greeks, or Angel One doesn't list this option
-  const missing = entry.loaded ? '—' : '…';
+  // Waiting for the first greeks / price, or Angel One doesn't list this option
+  const missing = (key) => ((key === 'pnl' ? entry.priced : entry.loaded) ? '—' : '…');
   return (
     <>
       <td>
@@ -51,15 +64,20 @@ function LiveCells({ entry, onFlip }) {
           {entry.buy ? 'BUY' : 'SELL'}
         </button>
       </td>
-      {DELTA_COLUMNS.map((column) => (
-        <td
-          key={column.key}
-          className={column.key === 'lots' ? 'num live-end' : 'num'}
-          title={column.key === 'delta' && entry.iv ? `IV ${entry.iv.toFixed(2)}%` : undefined}
-        >
-          {entry[column.key] !== null ? formatCell(entry[column.key], column) : entry.qty === null ? missing : ''}
-        </td>
-      ))}
+      {columns.map((column) => {
+        const value = entry[column.key];
+        const sign = column.key === 'pnl' && value !== null ? signClass(roundTo(value, column.decimals)) : '';
+        const unavailable = column.key === 'pnl' ? value === null : entry.qty === null;
+        return (
+          <td
+            key={column.key}
+            className={['num', sign, column.key === lastKey && 'live-end'].filter(Boolean).join(' ')}
+            title={column.key === 'delta' && entry.iv ? `IV ${entry.iv.toFixed(2)}%` : undefined}
+          >
+            {value !== null ? formatCell(value, column) : unavailable ? missing(column.key) : ''}
+          </td>
+        );
+      })}
     </>
   );
 }
@@ -81,13 +99,25 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
   const colored = useMemo(() => columns.map(isSignColored), [columns]);
   const summable = useMemo(() => columns.map(isSummable), [columns]);
 
-  // Option positions with live deltas; null when the sheet isn't a list of options
-  const positions = useMemo(() => readPositions(sheet), [sheet]);
+  // Option positions with live deltas and P&L; null when the sheet isn't a list of options
+  const read = useMemo(() => readPositions(sheet), [sheet]);
+  const positions = read?.positions ?? null;
+  const prices = read?.prices ?? null; // column indexes of buy price, sell price and P&L; null without both prices
   const expiries = useMemo(
     () => [...new Set((positions ?? []).filter(Boolean).map((position) => position.expiry))].sort(),
     [positions],
   );
-  const live = useLiveGreeks(expiries);
+  // Strikes to price: only when there are price columns to put the LTP in
+  const quotes = useMemo(
+    () =>
+      prices
+        ? [...new Set(positions.filter(Boolean).map((p) => `${p.expiry}:${p.strike}${p.type}`))].sort()
+        : [],
+    [positions, prices],
+  );
+  const live = useLiveGreeks(expiries, quotes);
+  useLoginReport('positions', live);
+  const liveColumns = useMemo(() => (prices ? [...DELTA_COLUMNS, PNL_COLUMN] : DELTA_COLUMNS), [prices]);
   const [flipped, setFlipped] = useState(() => new Set()); // row numbers whose side was changed by hand
 
   const deltas = useMemo(
@@ -97,19 +127,35 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
         const isFlipped = flipped.has(i + 1);
         const buy = position.buy !== isFlipped;
         const chain = live.greeks[position.expiry];
-        const quote = chain?.strikes[`${position.strike}${position.type}`];
+        const strike = `${position.strike}${position.type}`;
+        const quote = chain?.strikes[strike];
         const qty = quote ? (buy ? 1 : -1) * quote.delta * position.quantity : null;
+        // Prices tick with the live feed; delta follows the greeks poll
+        const known = live.ltps[position.expiry];
+        const ltp = prices ? known?.[strike] ?? null : null;
+        const pnl = pnlAt(position, buy, ltp);
+        // Shown in place of the pasted cells. The LTP goes in the price column opposite to the entry: a SELL's
+        // entry is its sell price, so its LTP goes in the buy price column, and the other way round.
+        const ltpColumn = ltp !== null ? (buy ? prices.sell : prices.buy) : null;
+        const overrides = {};
+        if (ltpColumn !== null) overrides[ltpColumn] = ltp;
+        if (pnl !== null && prices.pnl !== null) overrides[prices.pnl] = pnl;
         return {
           buy,
           flipped: isFlipped,
           loaded: Boolean(chain),
+          priced: Boolean(known && strike in known),
           delta: quote?.delta ?? null,
           iv: quote?.iv ?? null,
           qty,
           lots: qty !== null && position.lotSize ? qty / position.lotSize : null,
+          ltp,
+          ltpColumn,
+          pnl,
+          overrides,
         };
       }) ?? null,
-    [positions, flipped, live.greeks],
+    [positions, prices, flipped, live.greeks, live.ltps],
   );
 
   // Net delta of every position, whatever the filter
@@ -119,11 +165,14 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
     return {
       qty: sumOf(entries, 'qty'),
       lots: sumOf(entries, 'lots'),
+      pnl: sumOf(entries, 'pnl'),
+      hasPrices: Boolean(prices),
       missing: entries.filter((entry) => entry.loaded && entry.qty === null).length,
+      missingPnl: prices ? entries.filter((entry) => entry.priced && entry.pnl === null).length : 0,
       buys: entries.filter((entry) => entry.buy).length,
       sells: entries.filter((entry) => !entry.buy).length,
     };
-  }, [deltas]);
+  }, [deltas, prices]);
   // The oldest of the expiries' updates
   const updatedAt = expiries.map((expiry) => live.greeks[expiry]?.fetchedAt).filter(Boolean).sort()[0];
 
@@ -157,22 +206,22 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
       const factor = dir === 'asc' ? 1 : -1;
       const numeric = columns[index].type === 'number';
       list = [...list].sort((a, b) => {
-        const x = a.row[index];
-        const y = b.row[index];
+        const x = valueAt(rows, deltas, a.n, index);
+        const y = valueAt(rows, deltas, b.n, index);
         // Blanks always go last, whatever the direction
         if (isEmpty(x) || isEmpty(y)) return isEmpty(x) === isEmpty(y) ? 0 : isEmpty(x) ? 1 : -1;
         return factor * (numeric ? x - y : collator.compare(x, y));
       });
     }
     return list;
-  }, [rows, columns, query, sort, searchText]);
+  }, [rows, columns, deltas, query, sort, searchText]);
 
   const totals = useMemo(
     () =>
       columns.map((column, i) =>
-        summable[i] ? visible.reduce((sum, { row }) => sum + (row[i] ?? 0), 0) : null,
+        summable[i] ? visible.reduce((sum, { n }) => sum + (valueAt(rows, deltas, n, i) ?? 0), 0) : null,
       ),
-    [columns, summable, visible],
+    [columns, summable, visible, rows, deltas],
   );
   const visibleDeltas = useMemo(
     () => (deltas ? visible.map(({ n }) => deltas[n - 1]).filter(Boolean) : []),
@@ -192,12 +241,16 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
       downloadFile(`${exportName}.csv`, toCsv(columns, visible.map(({ row }) => row)));
       return;
     }
-    // Same order as the table: side and deltas first
+    // Same order and values as the table: side and live columns first, live prices and P&L in place
     const csvRows = visible.map(({ row, n }) => {
       const entry = deltas[n - 1];
-      return [entry ? (entry.buy ? 'BUY' : 'SELL') : '', ...DELTA_COLUMNS.map((c) => entry?.[c.key] ?? null), ...row];
+      return [
+        entry ? (entry.buy ? 'BUY' : 'SELL') : '',
+        ...liveColumns.map((c) => entry?.[c.key] ?? null),
+        ...row.map((_, i) => valueAt(rows, deltas, n, i)),
+      ];
     });
-    downloadFile(`${exportName}.csv`, toCsv([SIDE_COLUMN, ...DELTA_COLUMNS, ...columns], csvRows));
+    downloadFile(`${exportName}.csv`, toCsv([SIDE_COLUMN, ...liveColumns, ...columns], csvRows));
   }
 
   const countLabel =
@@ -247,11 +300,11 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
               {deltas && (
                 <>
                   <th scope="col" className="col-live">{SIDE_COLUMN.label}</th>
-                  {DELTA_COLUMNS.map((column) => (
+                  {liveColumns.map((column, k) => (
                     <th
                       key={column.key}
                       scope="col"
-                      className={column.key === 'lots' ? 'num col-live live-end' : 'num col-live'}
+                      className={k === liveColumns.length - 1 ? 'num col-live live-end' : 'num col-live'}
                     >
                       {column.label}
                     </th>
@@ -280,19 +333,24 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
             {visible.map(({ row, n }) => (
               <tr key={n}>
                 <td className="col-index">{n}</td>
-                {deltas && <LiveCells entry={deltas[n - 1]} onFlip={() => flipSide(n)} />}
-                {row.map((value, i) => {
+                {deltas && <LiveCells entry={deltas[n - 1]} columns={liveColumns} onFlip={() => flipSide(n)} />}
+                {row.map((pasted, i) => {
+                  const entry = deltas?.[n - 1];
+                  const isLive = entry?.overrides[i] !== undefined;
+                  const value = isLive ? entry.overrides[i] : pasted;
                   const numeric = columns[i].type === 'number';
-                  const sign = numeric && colored[i] ? signClass(value) : '';
-                  const className = numeric ? `num ${sign}` : 'text';
+                  const sign = numeric && colored[i] ? signClass(isLive ? roundTo(value, 2) : value) : '';
+                  const isLtp = isLive && entry.ltpColumn === i;
+                  const className = `${numeric ? `num ${sign}` : 'text'}${isLtp ? ' is-live-ltp' : ''}`;
                   const fill = fills?.[n - 1][i];
                   return (
                     <td
                       key={columns[i].label}
                       className={className.trim()}
                       style={fill ? fillStyle(fill, sign) : undefined}
+                      title={isLtp ? `Live LTP${isEmpty(pasted) ? '' : ` · pasted ${formatCell(pasted, columns[i])}`}` : undefined}
                     >
-                      {formatCell(value, columns[i])}
+                      {formatCell(value, isLive ? liveFormat(columns[i]) : columns[i])}
                     </td>
                   );
                 })}
@@ -306,11 +364,15 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
                 {deltas && (
                   <>
                     <td />
-                    {DELTA_COLUMNS.map((column) => {
-                      // A row's option delta doesn't add up; its quantity and lots do
+                    {liveColumns.map((column, k) => {
+                      // A row's option delta doesn't add up; its quantity, lots and P&L do
                       const total = column.key === 'delta' ? null : sumOf(visibleDeltas, column.key);
+                      const sign = column.key === 'pnl' && total !== null ? signClass(roundTo(total, column.decimals)) : '';
                       return (
-                        <td key={column.key} className={column.key === 'lots' ? 'num live-end' : 'num'}>
+                        <td
+                          key={column.key}
+                          className={['num', sign, k === liveColumns.length - 1 && 'live-end'].filter(Boolean).join(' ')}
+                        >
                           {total === null ? '' : formatCell(total, column)}
                         </td>
                       );

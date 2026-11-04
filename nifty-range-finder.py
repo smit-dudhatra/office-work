@@ -89,7 +89,7 @@ NIFTY_TOKEN = '99926000'  # NIFTY 50 index on NSE
 CANDLE_ATTEMPTS = 3  # Angel sometimes sends an empty reply; a later try usually works
 RETRY_DELAY = 2  # seconds between tries
 IST = timezone(timedelta(hours=5, minutes=30))
-MARKET_CLOSE = time(15, 30)
+MARKET_CLOSE = time(15, 40)
 
 PERIOD_COLUMNS = (('Expiry start', '<', 12), ('Expiry end', '<', 11),
                   ('Start close', '>', 11), ('End close', '>', 9),
