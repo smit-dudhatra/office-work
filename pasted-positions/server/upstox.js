@@ -297,27 +297,73 @@ export function upstoxWatch(name, spec) {
   sync();
 }
 
-// ------------------------------------------------------------------ candles
+// --------------------------------------------------------------------- REST
 
-/** Daily candles of an instrument from `from` to `to` ("2026-10-30"), oldest first: [{ date, open, high, low, close }]. */
-export async function upstoxDailyCandles(instrumentKey, from, to) {
+/** A REST call to Upstox; returns the `data` of a successful reply. `body` is sent as JSON with a POST. */
+async function api(path, body) {
   if (!upstoxConfigured()) throw new UpstoxError('Set UPSTOX_ACCESS_TOKEN in .env to use Upstox.');
   let response;
   try {
-    response = await fetch(`${API_ROOT}/v3/historical-candle/${encodeURIComponent(instrumentKey)}/days/1/${to}/${from}`, {
-      headers: { Accept: 'application/json', Authorization: `Bearer ${accessToken()}` },
+    response = await fetch(API_ROOT + path, {
+      method: body ? 'POST' : 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken()}`,
+        ...(body && { 'Content-Type': 'application/json' }),
+      },
+      body: body && JSON.stringify(body),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch {
     throw new UpstoxError('Cannot reach Upstox.');
   }
-  const body = await response.json().catch(() => null);
-  if (!response.ok || body?.status !== 'success') {
-    throw new UpstoxError(body?.errors?.[0]?.message || `Upstox returned HTTP ${response.status}.`);
+  const reply = await response.json().catch(() => null);
+  if (!response.ok || reply?.status !== 'success') {
+    throw new UpstoxError(reply?.errors?.[0]?.message || `Upstox returned HTTP ${response.status}.`);
   }
+  return reply.data;
+}
+
+// ------------------------------------------------------------------ candles
+
+/** Daily candles of an instrument from `from` to `to` ("2026-10-30"), oldest first: [{ date, open, high, low, close }]. */
+export async function upstoxDailyCandles(instrumentKey, from, to) {
+  const data = await api(`/v3/historical-candle/${encodeURIComponent(instrumentKey)}/days/1/${to}/${from}`);
   // Newest first; each row is [timestamp, open, high, low, close, volume, oi], the timestamp like 2026-10-30T00:00:00+05:30
-  return (body.data?.candles ?? [])
+  return (data?.candles ?? [])
     .map(([time, open, high, low, close]) => ({ date: String(time).slice(0, 10), open, high, low, close }))
     .filter((candle) => [candle.open, candle.high, candle.low, candle.close].every((value) => value > 0))
     .reverse();
+}
+
+// ------------------------------------------------------------------- margin
+
+/** Upstox takes at most this many instruments in one margin request. */
+export const UPSTOX_MARGIN_LIMIT = 20;
+
+/**
+ * Margin for a basket of NSE F&O positions taken together, so hedges count: legs [{ token, quantity, buy }]
+ * (NSE tokens, each once), product 'D' (NRML) or 'I' (MIS). Returns { required, final, span, exposure, premium }:
+ * `required` adds up the legs on their own and `final` is after the hedge benefit.
+ */
+export async function upstoxMargin(legs, product = 'D') {
+  const data = await api('/v2/charges/margin', {
+    instruments: legs.map(({ token, quantity, buy }) => ({
+      instrument_key: `NSE_FO|${token}`,
+      quantity,
+      transaction_type: buy ? 'BUY' : 'SELL',
+      product,
+    })),
+  });
+  const margins = data?.margins ?? [];
+  const sum = (field) => margins.reduce((total, margin) => total + (Number(margin[field]) || 0), 0);
+  const final = Number(data?.final_margin);
+  if (!Number.isFinite(final)) throw new UpstoxError('Upstox returned no margin.');
+  return {
+    required: Number(data.required_margin) || final,
+    final,
+    span: sum('span_margin'),
+    exposure: sum('exposure_margin'),
+    premium: sum('net_buy_premium'),
+  };
 }

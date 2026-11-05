@@ -4,7 +4,10 @@ import { fillStyle } from '../lib/fills.js';
 import { pnlAt, readPositions } from '../lib/positions.js';
 import { useLoginReport } from '../lib/angelLogin.js';
 import { useLiveGreeks } from '../lib/useLiveGreeks.js';
+import { useLotSizes } from '../lib/useLotSizes.js';
+import { useMargin } from '../lib/useMargin.js';
 import DeltaSummary from './DeltaSummary.jsx';
+import LotsTable from './LotsTable.jsx';
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
@@ -19,6 +22,11 @@ const PNL_COLUMN = { key: 'pnl', label: 'Live P&L', type: 'number', decimals: 2 
 
 function isEmpty(value) {
   return value === null || value === '';
+}
+
+/** The sheet's lot size for a position, else the one Angel One lists for its expiry. */
+function lotSizeOf(position, lotSizes) {
+  return position.lotSize || lotSizes?.[position.expiry] || null;
 }
 
 function sumOf(entries, key) {
@@ -117,8 +125,45 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
   );
   const live = useLiveGreeks(expiries, quotes);
   useLoginReport('positions', live);
+  const lotSizes = useLotSizes(expiries);
   const liveColumns = useMemo(() => (prices ? [...DELTA_COLUMNS, PNL_COLUMN] : DELTA_COLUMNS), [prices]);
   const [flipped, setFlipped] = useState(() => new Set()); // row numbers whose side was changed by hand
+
+  // Margin of every position with the side it shows (flips included), whatever the filter
+  const marginPositions = useMemo(
+    () =>
+      (positions ?? []).flatMap((position, i) =>
+        position
+          ? [{
+              expiry: position.expiry,
+              strike: position.strike,
+              type: position.type,
+              quantity: position.quantity,
+              buy: position.buy !== flipped.has(i + 1),
+            }]
+          : [],
+      ),
+    [positions, flipped],
+  );
+  const margin = useMargin(marginPositions);
+
+  // Lots by side (flips included) and option type, for every position whatever the filter
+  const lotCounts = useMemo(() => {
+    if (!positions) return null;
+    const counts = { sell: { CE: 0, PE: 0 }, buy: { CE: 0, PE: 0 }, missing: 0, pending: false };
+    positions.forEach((position, i) => {
+      if (!position) return;
+      const lotSize = lotSizeOf(position, lotSizes);
+      if (!lotSize) {
+        if (lotSizes === null) counts.pending = true;
+        else counts.missing += 1;
+        return;
+      }
+      const buy = position.buy !== flipped.has(i + 1);
+      counts[buy ? 'buy' : 'sell'][position.type] += position.quantity / lotSize;
+    });
+    return counts;
+  }, [positions, flipped, lotSizes]);
 
   const deltas = useMemo(
     () =>
@@ -134,6 +179,7 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
         const known = live.ltps[position.expiry];
         const ltp = prices ? known?.[strike] ?? null : null;
         const pnl = pnlAt(position, buy, ltp);
+        const lotSize = lotSizeOf(position, lotSizes);
         // Shown in place of the pasted cells. The LTP goes in the price column opposite to the entry: a SELL's
         // entry is its sell price, so its LTP goes in the buy price column, and the other way round.
         const ltpColumn = ltp !== null ? (buy ? prices.sell : prices.buy) : null;
@@ -148,14 +194,14 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
           delta: quote?.delta ?? null,
           iv: quote?.iv ?? null,
           qty,
-          lots: qty !== null && position.lotSize ? qty / position.lotSize : null,
+          lots: qty !== null && lotSize ? qty / lotSize : null,
           ltp,
           ltpColumn,
           pnl,
           overrides,
         };
       }) ?? null,
-    [positions, prices, flipped, live.greeks, live.ltps],
+    [positions, prices, flipped, live.greeks, live.ltps, lotSizes],
   );
 
   // Net delta of every position, whatever the filter
@@ -283,7 +329,8 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
         </div>
       </div>
 
-      {net && <DeltaSummary net={net} live={live} updatedAt={updatedAt} />}
+      {net && <DeltaSummary net={net} live={live} updatedAt={updatedAt} margin={margin} />}
+      {lotCounts && <LotsTable lots={lotCounts} />}
 
       {notes.length > 0 && (
         <ul className="notes">

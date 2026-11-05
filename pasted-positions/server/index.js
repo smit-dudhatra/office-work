@@ -6,6 +6,8 @@ import multer from 'multer';
 import { AngelError, login } from './angel.js';
 import { refreshDaily, streamDaily } from './daily.js';
 import { refreshGreeks, streamGreeks } from './greeks.js';
+import { EXPIRY_RE, niftyLotSizes } from './instruments.js';
+import { MarginError, marginHandler } from './margin.js';
 import { ParseError, parseFile, parseText } from './parse.js';
 import { reconnect } from './feed.js';
 
@@ -44,6 +46,14 @@ app.post('/api/parse/file', upload.single('file'), (req, res) => {
 
 app.get('/api/greeks/stream', streamGreeks);
 app.get('/api/daily/stream', streamDaily);
+app.post('/api/margin', express.json({ limit: '1mb' }), marginHandler);
+
+// Lot sizes of NIFTY options by expiry, for sheets without a Lot Size column: ?expiries=27OCT2026,03NOV2026
+app.get('/api/lot-sizes', async (req, res) => {
+  const expiries = String(req.query.expiries ?? '').toUpperCase().split(',').filter((expiry) => EXPIRY_RE.test(expiry));
+  const lotSize = await niftyLotSizes();
+  res.json(Object.fromEntries(expiries.slice(0, 20).map((expiry) => [expiry, lotSize(expiry) ?? null])));
+});
 
 app.post('/api/angel/login', express.json(), async (req, res) => {
   // Failed logins count against the Angel account, so only accept them from this computer
@@ -72,6 +82,7 @@ if (fs.existsSync(DIST_DIR)) {
 
 app.use((err, req, res, _next) => {
   if (err instanceof ParseError) return res.status(400).json({ error: err.message });
+  if (err instanceof MarginError) return res.status(err.status).json({ error: err.message });
   if (err instanceof AngelError) return res.status(err.code === 'NETWORK' ? 502 : 400).json({ error: err.message });
   if (err instanceof multer.MulterError) {
     const message = err.code === 'LIMIT_FILE_SIZE' ? 'File is larger than 10 MB.' : err.message;

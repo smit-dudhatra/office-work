@@ -12,6 +12,7 @@ const ROUTES = {
   optionGreek: '/rest/secure/angelbroking/marketData/v1/optionGreek',
   quote: '/rest/secure/angelbroking/market/v1/quote/',
   candles: '/rest/secure/angelbroking/historical/v1/getCandleData',
+  margin: '/rest/secure/angelbroking/margin/v1/batch',
 };
 // Invalid / expired / missing session token
 const TOKEN_ERRORS = new Set(['AG8001', 'AG8002', 'AG8003']);
@@ -297,4 +298,25 @@ export async function dailyCandles(exchange, token, from, to) {
       }))
       .filter((candle) => [candle.open, candle.high, candle.low, candle.close].every((value) => value > 0));
   }
+}
+
+/** Angel One takes at most this many positions in one margin request. */
+export const ANGEL_MARGIN_LIMIT = 50;
+
+/**
+ * Margin for a basket of NFO positions taken together, so hedges count: legs [{ token, quantity, buy }]
+ * (symbol tokens, each once), product CARRYFORWARD (NRML) or INTRADAY (MIS).
+ */
+export async function nfoMargin(legs, product = 'CARRYFORWARD') {
+  return securePost(ROUTES.margin, {
+    positions: legs.map(({ token, quantity, buy }) => ({
+      exchange: 'NFO',
+      qty: quantity,
+      price: 0,
+      productType: product,
+      token,
+      tradeType: buy ? 'BUY' : 'SELL',
+      orderType: 'MARKET',
+    })),
+  });
 }

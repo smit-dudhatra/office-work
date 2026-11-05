@@ -406,6 +406,53 @@ kbd {
   font-variant-numeric: tabular-nums;
 }
 
+.delta-figures dd.has-tip {
+  cursor: help;
+}
+
+.delta-figures dd.is-stale {
+  opacity: 0.55;
+}
+
+.margin-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.refresh-btn {
+  appearance: none;
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.refresh-btn:hover:not(:disabled) {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.refresh-btn:disabled {
+  cursor: progress;
+}
+
+.refresh-btn:disabled svg {
+  animation: spin 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .refresh-btn:disabled svg {
+    animation: none;
+  }
+}
+
 .delta-status {
   display: flex;
   flex-wrap: wrap;
@@ -485,6 +532,72 @@ kbd {
 .side-tag.is-flipped {
   border-style: dashed;
   border-color: currentColor;
+}
+
+/* ------------------------------------------------- lots by side and CE / PE */
+
+.lots-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 24px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.lots-table {
+  width: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.lots-table th,
+.lots-table td {
+  padding: 5px 14px;
+}
+
+.lots-table thead th {
+  position: static;
+  padding: 6px 14px;
+  text-align: right;
+}
+
+.lots-table thead th.lots-corner {
+  text-align: left;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.lots-table td {
+  min-width: 56px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.lots-table tbody th {
+  font-weight: 600;
+}
+
+.lots-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.lots-table tfoot th,
+.lots-table tfoot td {
+  position: static;
+}
+
+.lots-table .lots-total {
+  border-left: 1px solid var(--border);
+  font-weight: 650;
+}
+
+.lots-table .side-tag {
+  display: inline-block;
+  text-align: center;
+  cursor: default;
 }
 
 /* A price from the live feed, not the pasted sheet */

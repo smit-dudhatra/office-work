@@ -67,7 +67,8 @@ quantity (**Total Lot Size**, **Qty**, or **Lot Size** × **No. Lot**), each row
   fallback it comes from Angel's option-greeks API instead, every 3 seconds during market hours (09:15–15:40 IST)
   and every minute outside them. Put deltas are negative.
 - **Delta (qty)** = option delta × quantity, positive for BUY and negative for SELL. **Delta (lots)** divides by the
-  lot size. The summary above the table shows the net for every row; the Total row follows the filter.
+  lot size (from the sheet, else Angel's instrument list). The summary above the table shows the net for every row;
+  the Total row follows the filter.
 - An expiry without a year means the nearest such date (`27-Oct` → 27-Oct-2026).
 
 ### Live LTP and P&L
@@ -88,6 +89,37 @@ When the table also has **Buy Price** and **Sell Price** columns (headers with `
   close. CSV export has the live values.
 - Symbol tokens come from Angel's `OpenAPIScripMaster.json`. It is read from the folder above this one (shared with
   `angel_nifty_oi.py`) and downloaded again when it wasn't written today.
+
+### Margin
+
+The header shows the **Margin (NRML)** the positions need. The broker works it out for all of them together, so hedges
+(e.g. a call bought above a sold one) lower it, as they would in the account. **Return on margin** = Live P&L ÷ margin.
+
+- A broker counts a hedge only between options in the same request, so all of them go in one request where a source
+  takes that many: up to 20 options to Upstox (product `D`, Angel One if Upstox fails), 21–50 to Angel One
+  (`CARRYFORWARD`). The figure is then exact.
+- Otherwise (more than 50 options, or Angel One isn't logged in) they are split across several Upstox requests
+  (Angel One's if Upstox fails) and the margins are added up. That total is an upper bound, shown as **≈** with a note:
+  hedges between requests aren't counted. To keep it close, each expiry stays in one request when it fits; a bigger
+  one is split into its PE and CE options, so vertical spreads stay together, and a side that's still too big is cut
+  into runs of neighbouring strikes. Return on margin is marked ≈ too.
+- Each row counts with the side it shows, so flipping a row's BUY / SELL works the margin out again. Rows of the same
+  option are netted first: a BUY and a SELL of it offset each other.
+- It's worked out when the sheet is pasted, when a side is flipped, and when you press ↻ next to it. It doesn't
+  follow the market by itself; press ↻ for a fresh figure. While a new one loads, the last one stays, dimmed.
+- Hover the figure to see where it came from and how it adds up: the margin without the benefit, the margin benefit,
+  SPAN, exposure (Upstox only) and the premium of the bought options.
+- A row whose option isn't in Angel's instrument list (expired, or a strike that isn't listed) is left out of the
+  margin, and a note says how many.
+
+### Lots by side and CE / PE
+
+A small table under the header counts the lots of every position by side (SELL / BUY rows) and option type
+(CE / PE columns), with totals. It counts every position, whatever the filter.
+
+- A row counts with the side it shows, so flipping its BUY / SELL moves its lots to the other row.
+- Lots = quantity ÷ lot size. The lot size is the sheet's **Lot Size** column, else the one Angel's instrument list
+  gives for the expiry (the same goes for **Delta (lots)**). A row with neither is left out, and a note says how many.
 
 ## NIFTY 50 daily analysis
 
@@ -161,6 +193,8 @@ from the computer running the server. The session lasts until Angel expires it, 
 | POST | `/api/parse/file` | multipart, field `file` | same |
 | GET | `/api/greeks/stream?expiries=27OCT2026&quotes=27OCT2026:22050PE` | — | server-sent events: `status` `{ state, message, source, angelLogin }` (greeks), `feed` `{ state, message }` (WebSocket), `greeks` `{ expiry, fetchedAt, strikes: { '22050PE': { delta, iv } } }`, `ltps` `{ expiry, ltps: { '22050PE': price \| null } }` (changed strikes only) |
 | GET | `/api/daily/stream` | — | server-sent events: `status` `{ state, message, source, angelLogin }`, `daily` `{ symbol, updatedAt, date, ltp, today, prevDay, prevWeek, prevGreen, prevRed, allTimeHigh, low52Week, ema }` |
+| POST | `/api/margin` | JSON `{ positions: [{ expiry: '27OCT2026', strike, type: 'CE' \| 'PE', quantity, buy }] }` | `{ source: 'upstox' \| 'angel' \| null, approximate, requests, final, required, benefit, span, exposure, premium, legs, missing, skipped: [{ source, reason }], at }` (`final` is after the margin benefit, and an upper bound when `approximate`; `source` is null when every position is offset) |
+| GET | `/api/lot-sizes?expiries=27OCT2026,03NOV2026` | — | `{ '27OCT2026': 65 }`, null for an expiry Angel One doesn't list |
 | POST | `/api/angel/login` | JSON `{ totp }` | `{ ok: true }` |
 
 `fills` is only present when some data cell has a colour. It has the same shape as `rows`, and each entry is

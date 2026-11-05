@@ -33,6 +33,24 @@ export function loginAngel(totp) {
   });
 }
 
+/**
+ * Margin (NRML) of option positions taken together, so hedges count:
+ * positions [{ expiry: '27OCT2026', strike, type: 'CE' | 'PE', quantity, buy }].
+ */
+export function fetchMargin(positions, signal) {
+  return request('/api/margin', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ positions }),
+    signal,
+  });
+}
+
+/** Lot sizes of NIFTY options by expiry: { '27OCT2026': 65 }, null for an expiry Angel One doesn't list. */
+export function fetchLotSizes(expiries) {
+  return request(`/api/lot-sizes?expiries=${encodeURIComponent(expiries.join(','))}`);
+}
+
 export function parseFile(file) {
   const form = new FormData();
   form.append('file', file);
