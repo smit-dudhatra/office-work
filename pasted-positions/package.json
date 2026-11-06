@@ -6,7 +6,7 @@
   "description": "Paste or drop Excel data and view it as a sortable, filterable table",
   "scripts": {
     "dev": "concurrently -k -n server,client -c blue,magenta \"npm:dev:server\" \"npm:dev:client\"",
-    "dev:server": "node --watch server/index.js",
+    "dev:server": "node --watch-path=server server/index.js",
     "dev:client": "vite",
     "build": "vite build",
     "start": "node server/index.js"

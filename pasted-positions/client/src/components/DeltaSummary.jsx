@@ -1,4 +1,5 @@
 import { formatCell, roundTo, signClass } from '../lib/columns.js';
+import { OTM_EXPIRY_VALUE, expiryLabel } from '../lib/positions.js';
 
 const TWO_DECIMALS = { type: 'number', decimals: 2 };
 const PERCENT = { type: 'number', decimals: 2, percent: true };
@@ -25,6 +26,18 @@ function marginTitle({ margin, error }) {
   if (margin.premium !== null) lines.push(`Option premium (buys): ${money(margin.premium)}`);
   for (const { source, reason } of margin.skipped) lines.push(`${source} not used: ${reason}`);
   return lines.join('\n');
+}
+
+/** The hover text of the expiry P&L: what "expires here" means. */
+function expiryTitle(net) {
+  if (net.spot === null) return 'Waiting for the NIFTY 50 LTP.';
+  const settles = net.expiries > 1 ? `the ${expiryLabel(net.nearestExpiry)} options` : 'every option';
+  const later = net.expiries > 1 ? '\nLater expiries are at their live LTP, since they would still be trading.' : '';
+  return (
+    `If NIFTY 50 expired at ${formatCell(net.spot, TWO_DECIMALS)} (its LTP now), ${settles} would be worth what they ` +
+    `are in the money (CE: NIFTY − strike, PE: strike − NIFTY), or ₹${OTM_EXPIRY_VALUE.toFixed(2)} out of the money.` +
+    later
+  );
 }
 
 function RefreshIcon() {
@@ -68,12 +81,13 @@ function statusText({ status, message, source }, updatedAt) {
 export default function DeltaSummary({ net, live, updatedAt, margin }) {
   const figure = (value) => (value === null ? '—' : formatCell(value, TWO_DECIMALS));
   const loading = margin.status === 'loading' || margin.status === 'idle';
+  const stale = loading || margin.status === 'waiting';
   const final = margin.margin?.final ?? null;
   // Split across requests: the margin is an upper bound, so the return on it is a lower one
   const about = margin.margin?.approximate ? '≈ ' : '';
   const angelSkipped = margin.margin?.approximate && margin.margin.skipped.find(({ source }) => source === 'Angel One');
-  // The last margin stays on screen, dimmed, while the next one loads
-  const marginClass = final === null ? undefined : loading ? 'has-tip is-stale' : 'has-tip';
+  // The last margin stays on screen, dimmed, while the next one loads or the server can't be reached
+  const marginClass = final === null ? undefined : stale ? 'has-tip is-stale' : 'has-tip';
   const returnOnMargin = net.pnl !== null && final > 0 ? (net.pnl / final) * 100 : null;
   return (
     <section className="delta-summary" aria-label="Position P&L, margin and delta">
@@ -82,6 +96,21 @@ export default function DeltaSummary({ net, live, updatedAt, margin }) {
           <div>
             <dt>Live P&amp;L</dt>
             <dd className={net.pnl === null ? undefined : signClass(roundTo(net.pnl, 2))}>{figure(net.pnl)}</dd>
+          </div>
+        )}
+        {net.hasPrices && (
+          <div>
+            <dt>
+              Expiry P&amp;L
+              {net.expiries > 1 && ` (${expiryLabel(net.nearestExpiry)})`}
+              {net.spot !== null && ` @ ${formatCell(net.spot, TWO_DECIMALS)}`}
+            </dt>
+            <dd
+              className={['has-tip', net.expiryPnl !== null && signClass(roundTo(net.expiryPnl, 2))].filter(Boolean).join(' ')}
+              title={expiryTitle(net)}
+            >
+              {net.spot === null ? '…' : figure(net.expiryPnl)}
+            </dd>
           </div>
         )}
         <div>
@@ -99,7 +128,7 @@ export default function DeltaSummary({ net, live, updatedAt, margin }) {
             </button>
           </dt>
           <dd className={marginClass} title={marginTitle(margin)}>
-            {final !== null ? about + figure(final) : loading ? '…' : '—'}
+            {final !== null ? about + figure(final) : stale ? '…' : '—'}
           </dd>
         </div>
         {net.hasPrices && (
@@ -146,7 +175,17 @@ export default function DeltaSummary({ net, live, updatedAt, margin }) {
           no entry price in the sheet), so {net.missingPnl === 1 ? 'it is' : 'they are'} left out of the total.
         </p>
       )}
+      {net.hasPrices && net.missingExpiry > 0 && (
+        <p className="delta-note">
+          {net.missingExpiry} row{net.missingExpiry === 1 ? ' has' : 's have'} no expiry P&amp;L (no entry price in the
+          sheet{net.expiries > 1 ? ', or no live price for a later expiry' : ''}), so{' '}
+          {net.missingExpiry === 1 ? 'it is' : 'they are'} left out of it.
+        </p>
+      )}
       {margin.status === 'error' && <p className="delta-note">Margin: {margin.error}</p>}
+      {margin.status === 'waiting' && (
+        <p className="delta-note">Margin: {margin.error} Trying again every few seconds.</p>
+      )}
       {margin.margin?.approximate && (
         <p className="delta-note">
           ≈ Margin is an upper bound: {margin.margin.legs} options are more than one request takes, so they were sent in{' '}

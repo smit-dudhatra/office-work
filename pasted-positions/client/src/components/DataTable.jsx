@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react';
 import { downloadFile, formatCell, isSignColored, isSummable, roundTo, signClass, toCsv } from '../lib/columns.js';
 import { fillStyle } from '../lib/fills.js';
-import { pnlAt, readPositions } from '../lib/positions.js';
+import { expiryOrder, expiryValue, pnlAt, readPositions } from '../lib/positions.js';
 import { useLoginReport } from '../lib/angelLogin.js';
 import { useLiveGreeks } from '../lib/useLiveGreeks.js';
 import { useLotSizes } from '../lib/useLotSizes.js';
 import { useMargin } from '../lib/useMargin.js';
 import DeltaSummary from './DeltaSummary.jsx';
 import LotsTable from './LotsTable.jsx';
+import MarginDetails from './MarginDetails.jsx';
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
@@ -99,7 +100,7 @@ function SortIcon({ dir }) {
   );
 }
 
-export default function DataTable({ sheet, title, exportName, onClear }) {
+export default function DataTable({ sheet, title, exportName, onClear, niftyLtp = null }) {
   const { columns, rows, notes, fills } = sheet;
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState(null); // { index, dir: 'asc' | 'desc' }
@@ -204,6 +205,29 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
     [positions, prices, flipped, live.greeks, live.ltps, lotSizes],
   );
 
+  // The expiry that settles in the expiry P&L; later ones would still be trading
+  const nearestExpiry = useMemo(
+    () => [...expiries].sort((a, b) => expiryOrder(a) - expiryOrder(b))[0] ?? null,
+    [expiries],
+  );
+
+  // P&L if NIFTY expired at its LTP now: the nearest expiry's options at their expiry value, later ones at their
+  // live LTP. { pnl, missing }: rows with no entry price (or, for a later expiry, no live price) are left out.
+  const expiry = useMemo(() => {
+    if (!deltas || !prices || niftyLtp === null) return { pnl: null, missing: 0 };
+    let pnl = null;
+    let missing = 0;
+    deltas.forEach((entry, i) => {
+      if (!entry) return;
+      const position = positions[i];
+      const settles = position.expiry === nearestExpiry;
+      const value = settles ? pnlAt(position, entry.buy, expiryValue(position, niftyLtp)) : entry.pnl;
+      if (value !== null) pnl = (pnl ?? 0) + value;
+      else if (settles || entry.priced) missing += 1;
+    });
+    return { pnl, missing };
+  }, [deltas, prices, positions, nearestExpiry, niftyLtp]);
+
   // Net delta of every position, whatever the filter
   const net = useMemo(() => {
     if (!deltas) return null;
@@ -212,13 +236,18 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
       qty: sumOf(entries, 'qty'),
       lots: sumOf(entries, 'lots'),
       pnl: sumOf(entries, 'pnl'),
+      expiryPnl: expiry.pnl,
+      missingExpiry: expiry.missing,
+      spot: niftyLtp,
+      nearestExpiry,
+      expiries: expiries.length,
       hasPrices: Boolean(prices),
       missing: entries.filter((entry) => entry.loaded && entry.qty === null).length,
       missingPnl: prices ? entries.filter((entry) => entry.priced && entry.pnl === null).length : 0,
       buys: entries.filter((entry) => entry.buy).length,
       sells: entries.filter((entry) => !entry.buy).length,
     };
-  }, [deltas, prices]);
+  }, [deltas, prices, expiry, niftyLtp, nearestExpiry, expiries]);
   // The oldest of the expiries' updates
   const updatedAt = expiries.map((expiry) => live.greeks[expiry]?.fetchedAt).filter(Boolean).sort()[0];
 
@@ -330,6 +359,7 @@ export default function DataTable({ sheet, title, exportName, onClear }) {
       </div>
 
       {net && <DeltaSummary net={net} live={live} updatedAt={updatedAt} margin={margin} />}
+      {net && <MarginDetails margin={margin} />}
       {lotCounts && <LotsTable lots={lotCounts} />}
 
       {notes.length > 0 && (

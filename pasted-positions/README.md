@@ -12,6 +12,11 @@ npm install
 npm run dev          # API on :5050, UI on http://localhost:5173
 ```
 
+The API restarts when a file in `server/` changes, and the terminal says which one (`Change detected in …`). It
+doesn't watch `node_modules`, so restart `npm run dev` after an `npm install`. While it restarts, the UI's dev proxy
+logs `http proxy error … ECONNRESET` / `ECONNREFUSED` for the requests it cut off; that is expected. The live
+streams reconnect by themselves, and the margin and lot sizes are asked for again every 3 seconds until the API is back.
+
 Production-style (one port):
 
 ```bash
@@ -90,6 +95,19 @@ When the table also has **Buy Price** and **Sell Price** columns (headers with `
 - Symbol tokens come from Angel's `OpenAPIScripMaster.json`. It is read from the folder above this one (shared with
   `angel_nifty_oi.py`) and downloaded again when it wasn't written today.
 
+### Expiry P&L
+
+**Expiry P&L @ <NIFTY LTP>** in the header is the P&L if NIFTY 50 expired at its LTP now. It moves with every NIFTY
+tick (the same live price as the daily analysis card).
+
+- Each option of the nearest expiry in the sheet is worth what it would settle at: in the money, CE = NIFTY − strike
+  and PE = strike − NIFTY; out of the money (or less than a rupee in), ₹1.00. That value is the missing leg, as the
+  LTP is for Live P&L: P&L = (sell − buy) × quantity, with each row's side (flips included).
+- Options of later expiries would still be trading, so they count at their live LTP (their Live P&L). The label then
+  names the expiry that settles, e.g. *Expiry P&L (09 Nov)*.
+- Like Live P&L, it needs the Buy Price and Sell Price columns; a row with no entry price is left out, and a note says
+  how many.
+
 ### Margin
 
 The header shows the **Margin (NRML)** the positions need. The broker works it out for all of them together, so hedges
@@ -107,8 +125,11 @@ The header shows the **Margin (NRML)** the positions need. The broker works it o
   option are netted first: a BUY and a SELL of it offset each other.
 - It's worked out when the sheet is pasted, when a side is flipped, and when you press ↻ next to it. It doesn't
   follow the market by itself; press ↻ for a fresh figure. While a new one loads, the last one stays, dimmed.
-- Hover the figure to see where it came from and how it adds up: the margin without the benefit, the margin benefit,
-  SPAN, exposure (Upstox only) and the premium of the bought options.
+- **Margin details**, a row under the header, opens the broker's calculation: SPAN + exposure + premium of the bought
+  options = margin without the hedge benefit, − the hedge benefit = the final margin, with where and when it was worked
+  out. A part the broker doesn't list separately shows as *Other* (Angel One gives no exposure figure, so for it the
+  line is *Exposure & other*). Whether the row is open is remembered in this browser. Hovering the margin figure
+  shows the same numbers.
 - A row whose option isn't in Angel's instrument list (expired, or a strike that isn't listed) is left out of the
   margin, and a note says how many.
 

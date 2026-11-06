@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { fetchLotSizes } from './api.js';
+import { RETRY_MS, fetchLotSizes } from './api.js';
 
 /**
  * Lot sizes of NIFTY options by expiry ("27OCT2026"), from Angel One's instrument list, for sheets without a
- * Lot Size column: { '27OCT2026': 65 }, or null while they load. After a failure it is {} (no lot sizes known).
+ * Lot Size column: { '27OCT2026': 65 }, or null while they load. While the server can't be reached they stay null
+ * and are asked for again every few seconds; after any other failure they are {} (no lot sizes known).
  */
 export function useLotSizes(expiries) {
   const key = expiries.join(',');
@@ -15,13 +16,21 @@ export function useLotSizes(expiries) {
       return undefined;
     }
     let current = true;
+    let retry = null;
     setLotSizes(null);
-    fetchLotSizes(key.split(',')).then(
-      (sizes) => current && setLotSizes(sizes),
-      () => current && setLotSizes({}),
-    );
+    const load = () =>
+      fetchLotSizes(key.split(',')).then(
+        (sizes) => current && setLotSizes(sizes),
+        (err) => {
+          if (!current) return;
+          if (err.unreachable) retry = setTimeout(load, RETRY_MS);
+          else setLotSizes({});
+        },
+      );
+    load();
     return () => {
       current = false;
+      clearTimeout(retry);
     };
   }, [key]);
 

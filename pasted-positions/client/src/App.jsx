@@ -4,6 +4,7 @@ import DataTable from './components/DataTable.jsx';
 import Dropzone from './components/Dropzone.jsx';
 import LoginBanner from './components/LoginBanner.jsx';
 import { parseFile, parseText } from './lib/api.js';
+import { useLiveDaily } from './lib/useLiveDaily.js';
 
 function isEditable(target) {
   return target instanceof Element && Boolean(target.closest('input, textarea, select, [contenteditable]'));
@@ -54,6 +55,8 @@ export default function App() {
   const [error, setError] = useState('');
   const [dragging, setDragging] = useState(false);
   const latestRequest = useRef(0);
+  // NIFTY 50, tick by tick: the daily analysis card, and the expiry P&L of the positions
+  const daily = useLiveDaily();
 
   // Only the most recent paste/drop wins if several are in flight
   const run = useCallback(async (request) => {
@@ -192,7 +195,7 @@ export default function App() {
         </div>
       )}
 
-      <DailyAnalysis />
+      <DailyAnalysis live={daily} />
 
       {result && sheet && (
         <section className="results" aria-label="Parsed data">
@@ -219,6 +222,7 @@ export default function App() {
             title={title}
             exportName={exportName(result, sheet)}
             onClear={clear}
+            niftyLtp={daily.daily?.ltp ?? null}
           />
         </section>
       )}

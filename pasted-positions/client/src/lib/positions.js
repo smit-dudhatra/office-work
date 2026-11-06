@@ -99,6 +99,28 @@ export function pnlAt(position, buy, ltp) {
   return (buy ? ltp - entry : entry - ltp) * position.quantity;
 }
 
+/** "27OCT2026" → 20261027, so expiries sort by date ("01DEC2026" after "09NOV2026"). */
+export function expiryOrder(code) {
+  return Number(code.slice(5)) * 10_000 + (MONTHS.indexOf(code.slice(2, 5)) + 1) * 100 + Number(code.slice(0, 2));
+}
+
+/** "27OCT2026" → "27 Oct". */
+export function expiryLabel(code) {
+  return `${code.slice(0, 2)} ${code.slice(2, 3)}${code.slice(3, 5).toLowerCase()}`;
+}
+
+/** An out-of-the-money option counts as worth this much at expiry, not nothing. */
+export const OTM_EXPIRY_VALUE = 1;
+
+/**
+ * What an option is worth if NIFTY settles at `spot` on its expiry: its in-the-money amount (CE: spot − strike,
+ * PE: strike − spot), or ₹1.00 when that is less (out of the money, at the money, or less than a rupee in).
+ */
+export function expiryValue(position, spot) {
+  const inTheMoney = position.type === 'CE' ? spot - position.strike : position.strike - spot;
+  return Math.max(inTheMoney, OTM_EXPIRY_VALUE);
+}
+
 /**
  * The positions in a sheet, or null when it doesn't look like a list of options:
  * { positions, prices }. `positions` has an entry per row, { expiry, strike, type, quantity, lotSize, buy,

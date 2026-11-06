@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useLoginReport } from '../lib/angelLogin.js';
 import { formatCell, roundTo, signClass } from '../lib/columns.js';
 import { BIAS_TONE, biasTally, dailyRows, dayLabel } from '../lib/daily.js';
-import { useLiveDaily } from '../lib/useLiveDaily.js';
 
 const TWO_DECIMALS = { type: 'number', decimals: 2 };
 const OPEN_KEY = 'daily-analysis-open';
@@ -35,8 +34,7 @@ function statusText({ status, message, source, daily }) {
 }
 
 /** NIFTY 50 on the daily timeframe: where the LTP stands against the previous day, week, EMAs and all-time high. */
-export default function DailyAnalysis() {
-  const live = useLiveDaily();
+export default function DailyAnalysis({ live }) {
   const { daily } = live;
   const [open, setOpen] = useState(readOpen);
   useLoginReport('daily', live);

@@ -1,12 +1,25 @@
+/** How long to wait before asking a server that couldn't be reached again. */
+export const RETRY_MS = 3000;
+
+/** The server is down or restarting (`npm run dev` restarts it when a server file changes); worth trying again. */
+function unreachable() {
+  return Object.assign(new Error('Cannot reach the server. Is it running (npm run dev)?'), { unreachable: true });
+}
+
 async function request(url, init) {
   let response;
   try {
     response = await fetch(url, init);
-  } catch {
-    throw new Error('Cannot reach the server. Is it running (npm run dev)?');
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
+    throw unreachable();
   }
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(body?.error || `Server error (${response.status})`);
+  if (!response.ok) {
+    // The server answers every error with JSON. An empty gateway error comes from the dev proxy, whose server is down.
+    if (!body && response.status >= 502 && response.status <= 504) throw unreachable();
+    throw new Error(body?.error || `Server error (${response.status})`);
+  }
   return body;
 }
 
