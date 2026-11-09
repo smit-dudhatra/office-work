@@ -3,13 +3,11 @@ import { EXPIRY_RE, niftyOptionTokens } from './instruments.js';
 import { UPSTOX_MARGIN_LIMIT, upstoxMargin } from './upstox.js';
 
 // The margin the pasted NIFTY option positions need, NRML. A broker counts hedges only between options in the same
-// request, so all of them go in one request when one source takes that many:
-//   up to 20 options: Upstox, else Angel One;   21–50: Angel One.
-// Otherwise (more than 50, or Angel One not logged in) they are split across several Upstox requests (Angel One's
-// if Upstox fails) and added up. That total is an upper bound: hedges across requests aren't counted.
+// request, so all of them always go in one request, by the number of legs (options left after netting):
+//   up to 20: Upstox, or Angel One if Upstox fails;   21–50: Angel One only.
+// More than 50, or 21–50 while Angel One isn't logged in, can't be worked out: the reply is an error saying why.
 
 const MAX_ROWS = 500;
-const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 
 export class MarginError extends Error {
   constructor(message, status = 400) {
@@ -52,52 +50,6 @@ async function netLegs(rows) {
   return { legs, missing };
 }
 
-/** 27OCT2026 → 20261027, for sorting. */
-function expiryOrder(expiry) {
-  return Number(expiry.slice(5)) * 10_000 + (MONTHS.indexOf(expiry.slice(2, 5)) + 1) * 100 + Number(expiry.slice(0, 2));
-}
-
-/** `items` cut into the fewest runs of at most `limit`, as even as possible. */
-function evenChunks(items, limit) {
-  if (!items.length) return [];
-  const size = Math.ceil(items.length / Math.ceil(items.length / limit));
-  const chunks = [];
-  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
-  return chunks;
-}
-
-/**
- * Legs in requests of at most `limit`, keeping hedges together where it can, since a hedge only counts within a
- * request. Each expiry stays whole when it fits. A bigger one is split into its PE and CE legs, so vertical spreads
- * stay together (only the PE–CE offset is lost), and a side that is still too big is cut into runs of neighbouring
- * strikes. The pieces then share requests in expiry order while they fit.
- */
-export function marginBatches(legs, limit) {
-  const byExpiry = new Map();
-  for (const leg of [...legs].sort((a, b) => expiryOrder(a.expiry) - expiryOrder(b.expiry))) {
-    if (!byExpiry.has(leg.expiry)) byExpiry.set(leg.expiry, []);
-    byExpiry.get(leg.expiry).push(leg);
-  }
-  const pieces = [];
-  for (const group of byExpiry.values()) {
-    if (group.length <= limit) {
-      pieces.push(group);
-      continue;
-    }
-    for (const type of ['PE', 'CE']) {
-      const side = group.filter((leg) => leg.type === type).sort((a, b) => a.strike - b.strike);
-      pieces.push(...evenChunks(side, limit));
-    }
-  }
-  const batches = [];
-  for (const piece of pieces) {
-    const last = batches[batches.length - 1];
-    if (last && last.length + piece.length <= limit) last.push(...piece);
-    else batches.push([...piece]);
-  }
-  return batches;
-}
-
 const finite = (value) => (Number.isFinite(Number(value)) ? Number(value) : null);
 
 /** Angel's reply in Upstox's terms. It has no exposure figure; SPAN and premium are left out when it doesn't send them. */
@@ -117,63 +69,50 @@ async function angelMargin(legs) {
 }
 
 const SOURCES = {
-  upstox: { name: 'Upstox', limit: UPSTOX_MARGIN_LIMIT, margin: upstoxMargin },
-  angel: { name: 'Angel One', limit: ANGEL_MARGIN_LIMIT, margin: angelMargin },
+  upstox: { name: 'Upstox', margin: upstoxMargin },
+  angel: { name: 'Angel One', margin: angelMargin },
 };
 
-/** The margin of `legs` from `source`, split into requests that source takes, and added up. */
-async function splitMargin(source, legs) {
-  const { limit, margin } = SOURCES[source];
-  const parts = [];
-  // One at a time, to stay well inside the brokers' rate limits
-  for (const batch of marginBatches(legs, limit)) parts.push(await margin(batch));
-  const total = (key) => (parts.some((part) => part[key] === null) ? null : parts.reduce((sum, part) => sum + part[key], 0));
-  return {
-    required: total('required'),
-    final: total('final'),
-    span: total('span'),
-    exposure: total('exposure'),
-    premium: total('premium'),
-    requests: parts.length,
-  };
-}
+const notLoggedIn = (err) => err instanceof AngelError && err.code === 'NEEDS_LOGIN';
 
 /**
- * Margin of `rows` (see readRow): { source: 'upstox' | 'angel' | null, approximate, requests, required, final,
+ * Margin of `rows` (see readRow), all legs in one request: { source: 'upstox' | 'angel' | null, required, final,
  * benefit, span, exposure, premium, legs, missing, skipped, at }.
- * - `approximate` is true when the legs were split across `requests` requests; `final` is then an upper bound.
  * - `source` is null when nothing needs margin (no legs left after netting).
- * - `skipped` says why a better source wasn't used: [{ source: 'Upstox' | 'Angel One', reason }].
+ * - `skipped` says why Upstox wasn't used when Angel One stood in for it: [{ source: 'Upstox', reason }].
+ * Throws a MarginError when it can't be worked out: more than 50 legs, Angel One not logged in for 21–50, or every
+ * source that takes this many failed.
  */
 export async function positionsMargin(rows) {
   const { legs, missing } = await netLegs(rows);
   const result = { legs: legs.length, missing, skipped: [], at: new Date().toISOString() };
   if (!legs.length) {
-    return { ...result, source: null, approximate: false, requests: 0, required: 0, final: 0, benefit: 0, span: 0, exposure: 0, premium: 0 };
+    return { ...result, source: null, required: 0, final: 0, benefit: 0, span: 0, exposure: 0, premium: 0 };
+  }
+  if (legs.length > ANGEL_MARGIN_LIMIT) {
+    throw new MarginError(
+      `Can't calculate: ${legs.length} legs exceed the limit of ${ANGEL_MARGIN_LIMIT}, the most Angel One takes in one request.`,
+    );
   }
 
-  // Exact (one request) where a source takes this many legs, else split; each step only when the last one failed
-  const steps = [
-    { source: 'upstox', split: false },
-    { source: 'angel', split: false },
-    { source: 'upstox', split: true },
-    { source: 'angel', split: true },
-  ].filter(({ source, split }) => split === (legs.length > SOURCES[source].limit));
-  for (const { source, split } of steps) {
+  // Upstox first, Angel One if it fails, for up to 20 legs; only Angel One takes more
+  const sources = legs.length <= UPSTOX_MARGIN_LIMIT ? ['upstox', 'angel'] : ['angel'];
+  for (const source of sources) {
     try {
-      const margin = split ? await splitMargin(source, legs) : { ...(await SOURCES[source].margin(legs)), requests: 1 };
-      return {
-        ...result,
-        source,
-        approximate: split,
-        ...margin,
-        benefit: Math.max(0, margin.required - margin.final),
-      };
+      const margin = await SOURCES[source].margin(legs);
+      return { ...result, source, ...margin, benefit: Math.max(0, margin.required - margin.final) };
     } catch (err) {
-      result.skipped.push({ source: SOURCES[source].name, reason: err.message });
+      if (sources.length === 1 && notLoggedIn(err)) {
+        throw new MarginError(
+          `Can't calculate: Angel One login is not done. ${legs.length} legs need Angel One, since Upstox takes at ` +
+            `most ${UPSTOX_MARGIN_LIMIT}. Log in with your TOTP.`,
+          503,
+        );
+      }
+      result.skipped.push({ source: SOURCES[source].name, reason: notLoggedIn(err) ? 'login is not done.' : err.message });
     }
   }
-  throw new MarginError(result.skipped.map(({ source, reason }) => `${source}: ${reason}`).join(' '), 502);
+  throw new MarginError(`Can't calculate: ${result.skipped.map(({ source, reason }) => `${source}: ${reason}`).join(' ')}`, 502);
 }
 
 /** POST /api/margin with { positions: [{ expiry, strike, type, quantity, buy }] } */

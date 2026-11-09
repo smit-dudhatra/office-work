@@ -1,0 +1,23 @@
+# Third-party packages used by the Python scripts in this folder.
+# Install all:  python -m pip install -r requirements.txt
+
+# Angel One SmartAPI (angel_nifty_oi.py, high-low-break-alert.py, nifty-range-finder.py)
+smartapi-python
+pyotp
+logzero
+pycryptodome
+
+# Upstox market feed (upstox-webscoket.py)
+upstox-python-sdk
+protobuf
+
+# Shared
+requests
+websocket-client
+python-dotenv
+
+# Excel export (nifty-range-finder.py, only when EXPORT_EXCEL is on)
+openpyxl
+
+# Timezone data for zoneinfo on Windows (demo.py)
+tzdata

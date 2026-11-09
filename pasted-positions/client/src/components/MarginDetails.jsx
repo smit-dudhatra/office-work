@@ -39,7 +39,7 @@ function statement(m) {
   lines.push(
     { label: 'Margin without hedge benefit', op: parts.length ? '=' : '', value: m.required, total: parts.length > 0 },
     { label: 'Hedge benefit', op: '−', value: m.benefit },
-    { label: 'Final margin', op: m.approximate ? '≈' : '=', value: m.final, total: true, final: true },
+    { label: 'Final margin', op: '=', value: m.final, total: true, final: true },
   );
   return lines;
 }
@@ -71,7 +71,6 @@ export default function MarginDetails({ margin }) {
         Margin details
         <span className="margin-details-meta">
           from {from} at {timeLabel(m.at)}
-          {m.approximate && ' · ≈ upper bound'}
         </span>
       </summary>
       <div className="margin-details-body">
@@ -90,10 +89,8 @@ export default function MarginDetails({ margin }) {
         <ul className="margin-facts">
           <li>NRML (carryforward)</li>
           <li>
-            {m.legs} option{m.legs === 1 ? '' : 's'} (rows of the same option netted),{' '}
-            {m.approximate
-              ? `sent in ${m.requests} requests and added up, so hedges between requests aren’t counted`
-              : 'all in one request, so hedges between them count'}
+            {m.legs} option{m.legs === 1 ? '' : 's'} (rows of the same option netted), all in one request, so hedges
+            between them count
           </li>
           {m.skipped.map(({ source, reason }) => (
             <li key={source}>

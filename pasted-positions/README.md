@@ -113,14 +113,12 @@ tick (the same live price as the daily analysis card).
 The header shows the **Margin (NRML)** the positions need. The broker works it out for all of them together, so hedges
 (e.g. a call bought above a sold one) lower it, as they would in the account. **Return on margin** = Live P&L ÷ margin.
 
-- A broker counts a hedge only between options in the same request, so all of them go in one request where a source
-  takes that many: up to 20 options to Upstox (product `D`, Angel One if Upstox fails), 21–50 to Angel One
-  (`CARRYFORWARD`). The figure is then exact.
-- Otherwise (more than 50 options, or Angel One isn't logged in) they are split across several Upstox requests
-  (Angel One's if Upstox fails) and the margins are added up. That total is an upper bound, shown as **≈** with a note:
-  hedges between requests aren't counted. To keep it close, each expiry stays in one request when it fits; a bigger
-  one is split into its PE and CE options, so vertical spreads stay together, and a side that's still too big is cut
-  into runs of neighbouring strikes. Return on margin is marked ≈ too.
+- A broker counts a hedge only between options in the same request, so all of them always go in one request. Which
+  broker depends on the number of legs (options left after netting, see below):
+  - **up to 20**: Upstox (product `D`), or Angel One if Upstox fails;
+  - **21–50**: Angel One only (`CARRYFORWARD`), since Upstox takes at most 20 instruments per request.
+- More than 50 legs, or 21–50 while Angel One isn't logged in, can't be worked out: the margin shows **—** and a note
+  says why (legs exceed the limit of 50, or Angel One login is not done).
 - Each row counts with the side it shows, so flipping a row's BUY / SELL works the margin out again. Rows of the same
   option are netted first: a BUY and a SELL of it offset each other.
 - It's worked out when the sheet is pasted, when a side is flipped, and when you press ↻ next to it. It doesn't
@@ -214,7 +212,7 @@ from the computer running the server. The session lasts until Angel expires it, 
 | POST | `/api/parse/file` | multipart, field `file` | same |
 | GET | `/api/greeks/stream?expiries=27OCT2026&quotes=27OCT2026:22050PE` | — | server-sent events: `status` `{ state, message, source, angelLogin }` (greeks), `feed` `{ state, message }` (WebSocket), `greeks` `{ expiry, fetchedAt, strikes: { '22050PE': { delta, iv } } }`, `ltps` `{ expiry, ltps: { '22050PE': price \| null } }` (changed strikes only) |
 | GET | `/api/daily/stream` | — | server-sent events: `status` `{ state, message, source, angelLogin }`, `daily` `{ symbol, updatedAt, date, ltp, today, prevDay, prevWeek, prevGreen, prevRed, allTimeHigh, low52Week, ema }` |
-| POST | `/api/margin` | JSON `{ positions: [{ expiry: '27OCT2026', strike, type: 'CE' \| 'PE', quantity, buy }] }` | `{ source: 'upstox' \| 'angel' \| null, approximate, requests, final, required, benefit, span, exposure, premium, legs, missing, skipped: [{ source, reason }], at }` (`final` is after the margin benefit, and an upper bound when `approximate`; `source` is null when every position is offset) |
+| POST | `/api/margin` | JSON `{ positions: [{ expiry: '27OCT2026', strike, type: 'CE' \| 'PE', quantity, buy }] }` | `{ source: 'upstox' \| 'angel' \| null, final, required, benefit, span, exposure, premium, legs, missing, skipped: [{ source, reason }], at }` (`final` is after the margin benefit; `source` is null when every position is offset). More than 50 legs is a 400, Angel One not logged in for 21–50 legs a 503 |
 | GET | `/api/lot-sizes?expiries=27OCT2026,03NOV2026` | — | `{ '27OCT2026': 65 }`, null for an expiry Angel One doesn't list |
 | POST | `/api/angel/login` | JSON `{ totp }` | `{ ok: true }` |
 

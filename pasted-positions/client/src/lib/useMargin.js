@@ -6,13 +6,13 @@ const DEBOUNCE_MS = 400;
 const IDLE = { status: 'idle', margin: null, error: '' };
 
 /**
- * Margin (NRML) of the positions, from the server: Upstox, or Angel One as the fallback. Worked out again when a
- * position or its side changes, and on refresh(). positions: [{ expiry, strike, type, quantity, buy }].
+ * Margin (NRML) of the positions, from the server: Upstox for up to 20 legs (Angel One if it fails), Angel One for
+ * 21–50, and an error past that or when Angel One isn't logged in. Worked out again when a position or its side
+ * changes, and on refresh(). positions: [{ expiry, strike, type, quantity, buy }].
  * Returns { status: idle | loading | waiting | ok | error, margin, error, refresh }. `waiting`: the server can't be
  * reached (e.g. while `npm run dev` restarts it), so it is asked again every few seconds. `margin` is the server's reply
- * ({ source, approximate, requests, final, required, benefit, span, exposure, premium, legs, missing, skipped, at };
- * `final` is an upper bound when `approximate`). While a new one loads, `margin` is the last one; after an error it
- * is null.
+ * ({ source, final, required, benefit, span, exposure, premium, legs, missing, skipped, at }). While a new one loads,
+ * `margin` is the last one; after an error it is null.
  */
 export function useMargin(positions) {
   const key = JSON.stringify(positions);

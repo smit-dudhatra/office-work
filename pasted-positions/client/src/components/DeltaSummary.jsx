@@ -15,12 +15,10 @@ function marginTitle({ margin, error }) {
   if (!margin.source) return `No margin needed: every position is offset by another · ${timeLabel(margin.at)}`;
   const from = margin.source === 'angel' ? 'Angel One' : 'Upstox';
   const lines = [
-    margin.approximate
-      ? `NRML, from ${from} in ${margin.requests} requests, added up · ${timeLabel(margin.at)}`
-      : `NRML, from ${from} · ${timeLabel(margin.at)}`,
+    `NRML, from ${from} · ${timeLabel(margin.at)}`,
+    `Without margin benefit: ${money(margin.required)}`,
+    `Margin benefit (hedges): ${money(margin.benefit)}`,
   ];
-  if (margin.approximate) lines.push('Upper bound: hedges between options in different requests are not counted.');
-  lines.push(`Without margin benefit: ${money(margin.required)}`, `Margin benefit (hedges): ${money(margin.benefit)}`);
   if (margin.span !== null) lines.push(`SPAN: ${money(margin.span)}`);
   if (margin.exposure !== null) lines.push(`Exposure: ${money(margin.exposure)}`);
   if (margin.premium !== null) lines.push(`Option premium (buys): ${money(margin.premium)}`);
@@ -83,9 +81,6 @@ export default function DeltaSummary({ net, live, updatedAt, margin }) {
   const loading = margin.status === 'loading' || margin.status === 'idle';
   const stale = loading || margin.status === 'waiting';
   const final = margin.margin?.final ?? null;
-  // Split across requests: the margin is an upper bound, so the return on it is a lower one
-  const about = margin.margin?.approximate ? '≈ ' : '';
-  const angelSkipped = margin.margin?.approximate && margin.margin.skipped.find(({ source }) => source === 'Angel One');
   // The last margin stays on screen, dimmed, while the next one loads or the server can't be reached
   const marginClass = final === null ? undefined : stale ? 'has-tip is-stale' : 'has-tip';
   const returnOnMargin = net.pnl !== null && final > 0 ? (net.pnl / final) * 100 : null;
@@ -128,14 +123,14 @@ export default function DeltaSummary({ net, live, updatedAt, margin }) {
             </button>
           </dt>
           <dd className={marginClass} title={marginTitle(margin)}>
-            {final !== null ? about + figure(final) : stale ? '…' : '—'}
+            {final !== null ? figure(final) : stale ? '…' : '—'}
           </dd>
         </div>
         {net.hasPrices && (
           <div>
             <dt>Return on margin</dt>
             <dd className={returnOnMargin === null ? undefined : signClass(roundTo(returnOnMargin, 2))}>
-              {returnOnMargin === null ? '—' : about + formatCell(returnOnMargin, PERCENT)}
+              {returnOnMargin === null ? '—' : formatCell(returnOnMargin, PERCENT)}
             </dd>
           </div>
         )}
@@ -185,13 +180,6 @@ export default function DeltaSummary({ net, live, updatedAt, margin }) {
       {margin.status === 'error' && <p className="delta-note">Margin: {margin.error}</p>}
       {margin.status === 'waiting' && (
         <p className="delta-note">Margin: {margin.error} Trying again every few seconds.</p>
-      )}
-      {margin.margin?.approximate && (
-        <p className="delta-note">
-          ≈ Margin is an upper bound: {margin.margin.legs} options are more than one request takes, so they were sent in{' '}
-          {margin.margin.requests} and added up, and hedges between requests aren&rsquo;t counted.
-          {angelSkipped && ` Angel One gives the exact figure for up to 50 options but wasn’t used: ${angelSkipped.reason}`}
-        </p>
       )}
       {margin.margin?.missing > 0 && (
         <p className="delta-note">
