@@ -1,7 +1,7 @@
-import { dailyCandles, nseQuote } from './angel.js';
+import { dailyCandles, minuteCandles, nseQuote } from './angel.js';
 import { feedStatus, onSourceChange, sourceInfo, watch } from './feed.js';
 import { istDate, marketOpen } from './market.js';
-import { NIFTY_INDEX_KEY, upstoxConfigured, upstoxDailyCandles } from './upstox.js';
+import { NIFTY_INDEX_KEY, upstoxConfigured, upstoxDailyCandles, upstoxMinuteCandles } from './upstox.js';
 
 // Daily analysis of NIFTY 50 for the browser: past daily candles (loaded once a day) against today's candle,
 // which moves tick by tick on the live feed. Upstox is the source, Angel One the fallback for both. Upstox sends
@@ -17,6 +17,7 @@ const RETRY_MS = 30_000;
 const PUSH_MS = 250; // at most four updates a second
 const STATUS_CHECK_MS = 30_000; // notices the market opening or closing
 const HEARTBEAT_MS = 15_000;
+const MINUTE_RETRY_MS = 60_000; // minute candles again while the time of the high or low is unknown
 export const EMA_PERIODS = [5, 21, 252];
 
 const clients = new Set(); // { res }
@@ -24,6 +25,12 @@ let status = { state: 'connecting', message: '' };
 let problem = null; // { state, message } when the candles or the first quote couldn't be loaded
 let history = null; // { candles, loadedOn }
 let today = null; // { date, time, ltp, open, high, low }
+// When the day's high and low were made (ms): `seen` from the ticks, `minute` from the day's 1-minute candles.
+// Each is { date, high, highAt, low, lowAt }; `seen` has no time for the high / low it found already made.
+let seen = null;
+let minute = null;
+let minuteFetchedAt = 0;
+let minuteLoading = false;
 let latest = null; // last `daily` payload
 let starting = null;
 let retryTimer = null;
@@ -50,7 +57,8 @@ function liveEma(closes, period, ltp) {
 
 /**
  * The levels the daily table compares the LTP with. `candles` are past daily candles, oldest first (any for
- * today's date are ignored); `now` is today's candle so far, { date, ltp, open, high, low }.
+ * today's date are ignored); `now` is today's candle so far, { date, ltp, open, high, low, highAt?, lowAt? },
+ * `highAt` / `lowAt` being when the high and low were made (ms).
  */
 export function analyseDaily(candles, now) {
   const past = candles.filter((candle) => candle.date < now.date);
@@ -78,7 +86,7 @@ export function analyseDaily(candles, now) {
   return {
     date: now.date,
     ltp: now.ltp,
-    today: candle,
+    today: candle && { ...candle, highAt: now.highAt ?? null, lowAt: now.lowAt ?? null },
     prevDay: prevDay && { date: prevDay.date, open: prevDay.open, high: prevDay.high, low: prevDay.low, close: prevDay.close },
     prevWeek: week.length
       ? {
@@ -127,10 +135,83 @@ onSourceChange(() => {
   if (clients.size) updateStatus();
 });
 
+/** The high or low of the minute candles: the first candle to reach it, `better` telling which is further out. */
+function extreme(candles, side, better) {
+  const best = candles.reduce((top, candle) => (!top || better(candle[side], top[side]) ? candle : top), null);
+  return { [side]: best?.[side] ?? null, [`${side}At`]: best?.time ?? null };
+}
+
+/** NIFTY 50's 1-minute candles on `date` from Upstox, or from Angel One when Upstox can't give them. */
+async function loadMinute(date) {
+  let candles = null;
+  if (upstoxConfigured()) {
+    try {
+      candles = await upstoxMinuteCandles(NIFTY_INDEX_KEY, date);
+    } catch (err) {
+      console.error(`NIFTY 50 minute candles (Upstox): ${err.message}`);
+    }
+  }
+  candles ??= await minuteCandles('NSE', NIFTY_TOKEN, date);
+  return {
+    date,
+    ...extreme(candles, 'high', (a, b) => a > b),
+    ...extreme(candles, 'low', (a, b) => a < b),
+  };
+}
+
+/** Notes the time of a new high or low that the ticks show being made. */
+function noteExtremes(next) {
+  if (!(next.high > 0 && next.low > 0)) return;
+  if (seen?.date !== next.date) {
+    seen = { date: next.date, high: next.high, highAt: null, low: next.low, lowAt: null };
+    return;
+  }
+  if (next.high > seen.high) Object.assign(seen, { high: next.high, highAt: next.time });
+  if (next.low < seen.low) Object.assign(seen, { low: next.low, lowAt: next.time });
+}
+
+/**
+ * When the day's high and low were made (ms, null when unknown): the tick that made it, else the minute candle
+ * that reached it. The candles may be older than a high the ticks saw, so the ticks win when theirs is as high.
+ */
+function extremeTimes(date) {
+  const ticks = seen?.date === date ? seen : null;
+  const candles = minute?.date === date ? minute : null;
+  const pick = (side, atLeast) => {
+    const at = `${side}At`;
+    if (ticks?.[at] && (candles?.[side] == null || atLeast(ticks[side], candles[side]))) return ticks[at];
+    return candles?.[at] ?? null;
+  };
+  return { highAt: pick('high', (a, b) => a >= b), lowAt: pick('low', (a, b) => a <= b) };
+}
+
+/** Loads the day's minute candles, again at most once a minute while the time of the high or low is unknown. */
+function refreshMinute(date, times) {
+  const known = minute?.date === date && times.highAt && times.lowAt;
+  if (known || minuteLoading || Date.now() - minuteFetchedAt < MINUTE_RETRY_MS) return;
+  minuteLoading = true;
+  minuteFetchedAt = Date.now();
+  loadMinute(date)
+    .then((next) => {
+      minute = next;
+      pushTimer ??= setTimeout(push, PUSH_MS);
+    })
+    .catch((err) => console.error(`NIFTY 50 minute candles: ${err.message}`))
+    .finally(() => {
+      minuteLoading = false;
+    });
+}
+
 function push() {
   pushTimer = null;
   if (!history || !today) return;
-  latest = { symbol: 'NIFTY 50', updatedAt: new Date(today.time).toISOString(), ...analyseDaily(history.candles, today) };
+  const times = extremeTimes(today.date);
+  refreshMinute(today.date, times);
+  latest = {
+    symbol: 'NIFTY 50',
+    updatedAt: new Date(today.time).toISOString(),
+    ...analyseDaily(history.candles, { ...today, ...times }),
+  };
   for (const client of clients) send(client, 'daily', latest);
   updateStatus();
   // A new day: yesterday's candle is now history
@@ -141,6 +222,7 @@ function setToday(next) {
   // A REST quote can be older than a tick that arrived while it was on its way
   if (today && next.time < today.time) return;
   today = next;
+  noteExtremes(next);
   pushTimer ??= setTimeout(push, PUSH_MS);
 }
 

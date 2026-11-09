@@ -9,7 +9,8 @@ const PRICE_WORD = '(?:price|avg|average|rate)';
 const sidePriceRe = (side) => new RegExp(`\\b${side}\\b.*\\b${PRICE_WORD}\\b|\\b${PRICE_WORD}\\b.*\\b${side}\\b`, 'i');
 const BUY_PRICE_RE = sidePriceRe('buy');
 const SELL_PRICE_RE = sidePriceRe('sell');
-const PNL_COLUMN_RE = /^(?:p\s*[&/]\s*l|pnl)$/i;
+export const PNL_COLUMN_RE = /^(?:p\s*[&/]\s*l|pnl)$/i;
+export const LOTS_COLUMN_RE = /^(?:no\.?\s*(?:of\s*)?lots?|lots)$/i;
 
 function validDate(year, month, day) {
   const date = new Date(Date.UTC(year, month, day));
@@ -82,7 +83,7 @@ function findColumns(columns, rows) {
     optionType,
     quantity: byLabel(/^(?:total\s*lot\s*size|qty|quantity|net\s*qty)$/i),
     lotSize: byLabel(/^lot\s*size$/i),
-    lots: byLabel(/^(?:no\.?\s*(?:of\s*)?lots?|lots)$/i),
+    lots: byLabel(LOTS_COLUMN_RE),
     buyPrice: byLabel(BUY_PRICE_RE),
     sellPrice: byLabel(SELL_PRICE_RE),
     pnl: byLabel(PNL_COLUMN_RE),

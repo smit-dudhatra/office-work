@@ -1,8 +1,11 @@
 import { useMemo, useState } from 'react';
 import { downloadFile, formatCell, isSignColored, isSummable, roundTo, signClass, toCsv } from '../lib/columns.js';
 import { fillStyle } from '../lib/fills.js';
-import { expiryOrder, expiryValue, pnlAt, readPositions } from '../lib/positions.js';
+import { expiryOrder, expiryValue, LOTS_COLUMN_RE, PNL_COLUMN_RE, pnlAt, readPositions } from '../lib/positions.js';
 import { useLoginReport } from '../lib/angelLogin.js';
+import { formatLots, lotsRows } from '../lib/lots.js';
+import { niftyRows } from '../lib/niftyNow.js';
+import { tableSnapshot } from '../lib/snapshot.js';
 import { useLiveGreeks } from '../lib/useLiveGreeks.js';
 import { useLotSizes } from '../lib/useLotSizes.js';
 import { useMargin } from '../lib/useMargin.js';
@@ -43,6 +46,25 @@ function liveFormat(column) {
 /** What a cell shows: the live value where the feed has replaced the pasted one. */
 function valueAt(rows, deltas, n, i) {
   return deltas?.[n - 1]?.overrides[i] ?? rows[n - 1][i];
+}
+
+/** Columns the JPEG's Total row adds up: No. Lot and P&L. */
+function isSnapshotTotal(column) {
+  const label = column.label.trim();
+  return column.type === 'number' && (LOTS_COLUMN_RE.test(label) || PNL_COLUMN_RE.test(label));
+}
+
+/** A pasted cell as the table shows it: the live value where the feed has replaced it (LTP, P&L), and its sign. */
+function pastedCell(entry, row, i, column, colored) {
+  const isLive = entry?.overrides[i] !== undefined;
+  const value = isLive ? entry.overrides[i] : row[i];
+  const numeric = column.type === 'number';
+  return {
+    numeric,
+    isLtp: isLive && entry.ltpColumn === i,
+    sign: numeric && colored ? signClass(isLive ? roundTo(value, 2) : value) : '',
+    text: formatCell(value, isLive ? liveFormat(column) : column),
+  };
 }
 
 function LiveCells({ entry, columns, onFlip }) {
@@ -100,8 +122,10 @@ function SortIcon({ dir }) {
   );
 }
 
-export default function DataTable({ sheet, title, exportName, onClear, niftyLtp = null }) {
-  const { columns, rows, notes, fills } = sheet;
+/** `nifty` is the latest NIFTY 50 daily update (null until there is one). */
+export default function DataTable({ sheet, title, exportName, onClear, nifty = null }) {
+  const { columns, rows, notes, fills, headerFills } = sheet;
+  const niftyLtp = nifty?.ltp ?? null;
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState(null); // { index, dir: 'asc' | 'desc' }
 
@@ -328,6 +352,68 @@ export default function DataTable({ sheet, title, exportName, onClear, niftyLtp 
     downloadFile(`${exportName}.csv`, toCsv([SIDE_COLUMN, ...liveColumns, ...columns], csvRows));
   }
 
+  // A picture of the table as pasted: its columns in their order, every row in pasted order (whatever the filter
+  // and sort), the cell colours, and the live LTP / P&L in place, then a Total row for No. Lot and P&L only.
+  // No side or delta columns. The lots summary and the NIFTY 50 table go below it, side by side.
+  async function exportJpeg() {
+    const header = columns.map((column, i) => ({
+      text: column.label,
+      numeric: column.type === 'number',
+      fill: headerFills?.[i] ?? null,
+    }));
+    const body = rows.map((row, r) =>
+      row.map((_, i) => {
+        const { text, numeric, sign } = pastedCell(deltas?.[r], row, i, columns[i], colored[i]);
+        return { text, numeric, sign, fill: fills?.[r][i] ?? null };
+      }),
+    );
+    // Sum of the values as shown (live P&L where there is one, else the pasted value); blank if the column is empty
+    const totalled = columns.map(isSnapshotTotal);
+    const footer = totalled.some(Boolean)
+      ? columns.map((column, i) => {
+          if (!totalled[i]) return { text: i === 0 ? 'Total' : '', numeric: false, fill: null };
+          const values = rows.map((_, r) => valueAt(rows, deltas, r + 1, i)).filter((value) => !isEmpty(value));
+          // Shown to the paise like the live cells it adds up
+          const format = rows.some((_, r) => deltas?.[r]?.overrides[i] !== undefined) ? liveFormat(column) : column;
+          const total = values.length ? roundTo(values.reduce((sum, value) => sum + value, 0), format.decimals) : null;
+          return {
+            text: total === null ? '' : formatCell(total, format),
+            numeric: true,
+            sign: colored[i] ? signClass(total) : '',
+            fill: null,
+          };
+        })
+      : null;
+    // Below it: the lots summary, as on screen, and NIFTY 50 at the time of the snapshot
+    const below = [];
+    if (lotCounts) {
+      const [sell, buy, total] = lotsRows(lotCounts);
+      const line = (row) => [
+        { text: row.label, bold: true },
+        ...[row.CE, row.PE, row.total].map((value, k) => ({
+          text: formatLots(lotCounts, value),
+          numeric: true,
+          bold: k === 2,
+        })),
+      ];
+      below.push({
+        header: ['Lots', 'CE', 'PE', 'Total'].map((text, k) => ({ text, numeric: k > 0 })),
+        rows: [line(sell), line(buy)],
+        footer: line(total),
+      });
+    }
+    // SELL positions (flips included) with their live LTP, for the first CE / PE
+    const sold = (positions ?? []).flatMap((position, i) =>
+      position && !deltas[i].buy
+        ? [{ expiry: position.expiry, strike: position.strike, type: position.type, ltp: deltas[i].ltp }]
+        : [],
+    );
+    below.push({
+      rows: niftyRows(nifty, { sold }).map(([label, value]) => [{ text: label, bold: true }, { text: value }]),
+    });
+    downloadFile(`${exportName}.jpeg`, await tableSnapshot([[{ header, rows: body, footer }], below]), 'image/jpeg');
+  }
+
   const countLabel =
     visible.length === rows.length
       ? `${rows.length} row${rows.length === 1 ? '' : 's'} · ${columns.length} column${columns.length === 1 ? '' : 's'}`
@@ -351,6 +437,14 @@ export default function DataTable({ sheet, title, exportName, onClear, niftyLtp 
           />
           <button type="button" className="btn" onClick={exportCsv} disabled={!visible.length}>
             Export CSV
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={exportJpeg}
+            title="Picture of the pasted table with the live LTP filled in"
+          >
+            Export JPEG
           </button>
           <button type="button" className="btn btn-ghost" onClick={onClear}>
             Clear
@@ -412,12 +506,7 @@ export default function DataTable({ sheet, title, exportName, onClear, niftyLtp 
                 <td className="col-index">{n}</td>
                 {deltas && <LiveCells entry={deltas[n - 1]} columns={liveColumns} onFlip={() => flipSide(n)} />}
                 {row.map((pasted, i) => {
-                  const entry = deltas?.[n - 1];
-                  const isLive = entry?.overrides[i] !== undefined;
-                  const value = isLive ? entry.overrides[i] : pasted;
-                  const numeric = columns[i].type === 'number';
-                  const sign = numeric && colored[i] ? signClass(isLive ? roundTo(value, 2) : value) : '';
-                  const isLtp = isLive && entry.ltpColumn === i;
+                  const { numeric, sign, isLtp, text } = pastedCell(deltas?.[n - 1], row, i, columns[i], colored[i]);
                   const className = `${numeric ? `num ${sign}` : 'text'}${isLtp ? ' is-live-ltp' : ''}`;
                   const fill = fills?.[n - 1][i];
                   return (
@@ -427,7 +516,7 @@ export default function DataTable({ sheet, title, exportName, onClear, niftyLtp 
                       style={fill ? fillStyle(fill, sign) : undefined}
                       title={isLtp ? `Live LTP${isEmpty(pasted) ? '' : ` · pasted ${formatCell(pasted, columns[i])}`}` : undefined}
                     >
-                      {formatCell(value, isLive ? liveFormat(columns[i]) : columns[i])}
+                      {text}
                     </td>
                   );
                 })}

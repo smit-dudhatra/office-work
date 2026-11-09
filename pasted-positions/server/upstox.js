@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { istDate } from './market.js';
 
 // Upstox market data, the app's main source (Angel One is the fallback): the V3 market-data WebSocket and daily
 // candles. Read-only, with the token in UPSTOX_ACCESS_TOKEN (a daily access token or the 1-year Analytics Token).
@@ -333,6 +334,24 @@ export async function upstoxDailyCandles(instrumentKey, from, to) {
   return (data?.candles ?? [])
     .map(([time, open, high, low, close]) => ({ date: String(time).slice(0, 10), open, high, low, close }))
     .filter((candle) => [candle.open, candle.high, candle.low, candle.close].every((value) => value > 0))
+    .reverse();
+}
+
+/**
+ * One-minute candles of an instrument on `date` ("2026-10-30"), oldest first: [{ time (ms), high, low }].
+ * Today's come from the intraday API, an earlier day's from the historical one.
+ */
+export async function upstoxMinuteCandles(instrumentKey, date) {
+  const key = encodeURIComponent(instrumentKey);
+  const data = await api(
+    date === istDate()
+      ? `/v3/historical-candle/intraday/${key}/minutes/1`
+      : `/v3/historical-candle/${key}/minutes/1/${date}/${date}`,
+  );
+  // Newest first, the timestamp like 2026-10-30T10:42:00+05:30 (the start of the minute)
+  return (data?.candles ?? [])
+    .map(([time, , high, low]) => ({ time: Date.parse(time), high, low }))
+    .filter((candle) => Number.isFinite(candle.time) && candle.high > 0 && candle.low > 0)
     .reverse();
 }
 

@@ -2,7 +2,7 @@
 // so their text colour is picked to read well on that colour rather than on the page.
 
 // The light and dark theme text / P&L colours from styles.css
-const ON_LIGHT = { text: '#191c22', pos: '#11773b', neg: '#c22a2a' };
+export const ON_LIGHT = { text: '#191c22', pos: '#11773b', neg: '#c22a2a' };
 const ON_DARK = { text: '#e6e8ed', pos: '#4cc27e', neg: '#ff6f6f' };
 // Below this contrast against the fill, green / red is hard to read and the plain text colour is used
 const MIN_SIGN_CONTRAST = 3;

@@ -1,4 +1,4 @@
-const lotsFormat = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 });
+import { formatLots, lotsRows } from '../lib/lots.js';
 
 /**
  * Lots of the pasted positions by side and option type, every position whatever the filter.
@@ -6,12 +6,9 @@ const lotsFormat = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 });
  * `pending` is true while lot sizes are still loading.
  */
 export default function LotsTable({ lots }) {
-  const figure = (value) => (lots.pending ? '…' : lotsFormat.format(value));
-  const rows = [
-    { key: 'sell', label: 'SELL', ...lots.sell },
-    { key: 'buy', label: 'BUY', ...lots.buy },
-  ];
-  const total = { CE: lots.sell.CE + lots.buy.CE, PE: lots.sell.PE + lots.buy.PE };
+  const figure = (value) => formatLots(lots, value);
+  const [sell, buy, total] = lotsRows(lots);
+  const rows = [sell, buy];
   return (
     <section className="lots-summary" aria-label="Lots by side and option type">
       <table className="lots-table">
@@ -31,7 +28,7 @@ export default function LotsTable({ lots }) {
               </th>
               <td>{figure(row.CE)}</td>
               <td>{figure(row.PE)}</td>
-              <td className="lots-total">{figure(row.CE + row.PE)}</td>
+              <td className="lots-total">{figure(row.total)}</td>
             </tr>
           ))}
         </tbody>
@@ -40,7 +37,7 @@ export default function LotsTable({ lots }) {
             <th scope="row">Total</th>
             <td>{figure(total.CE)}</td>
             <td>{figure(total.PE)}</td>
-            <td className="lots-total">{figure(total.CE + total.PE)}</td>
+            <td className="lots-total">{figure(total.total)}</td>
           </tr>
         </tfoot>
       </table>

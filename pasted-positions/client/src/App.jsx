@@ -222,7 +222,7 @@ export default function App() {
             title={title}
             exportName={exportName(result, sheet)}
             onClear={clear}
-            niftyLtp={daily.daily?.ltp ?? null}
+            nifty={daily.daily}
           />
         </section>
       )}

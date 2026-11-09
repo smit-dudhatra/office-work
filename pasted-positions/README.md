@@ -30,6 +30,20 @@ npm start            # http://localhost:5050
 - **File**: drag a `.xlsx / .xls / .xlsm / .xlsb / .ods / .csv / .tsv / .txt` file (max 10 MB) onto the page, or click *Browse file*. Each sheet of a workbook gets its own tab.
 - Click a column header to sort (ascending → descending → off). The filter box matches rows containing all of the words you type.
 - **Export CSV** downloads the rows currently shown (filtered and sorted).
+- **Export JPEG** downloads a picture of the table as pasted: the pasted columns in their order, every row in pasted
+  order (the filter and sort are ignored), the cell colours (header too), and the live LTP and P&L filled in. The
+  Side, Delta and Live P&L columns and the # column are left out. A bold **Total** row at the bottom adds up only
+  the **No. Lot** (`No. Lot`, `No. of Lots`, `Lots`) and **P&L** (`P&L`, `PnL`) columns, over every row, using the
+  values as shown (live P&L where there is one). Below it come the lots summary (SELL / BUY × CE / PE, with
+  totals), the same figures as on screen, and beside that a NIFTY 50 table: the time of the snapshot, the time
+  left to 3:40 PM ("Market closed" after it and at weekends), the LTP with its change from the previous close
+  (points and %), today's high and low with the time each was made, and today's range (high − low). Times are IST.
+  The time of the high / low comes from the day's 1-minute candles (Upstox, else Angel One), so it is the minute
+  it was made; a new high or low made while the app is open takes the time of the tick that made it.
+  **First CE At** / **First PE At** show the SELL CE / PE (flips included) whose strike is nearest the NIFTY LTP,
+  either side, in the nearest expiry that has a sold option: `24500 CE (+527.00) @ 45.20 LTP`. The distance is
+  positive out of the money (CE: strike − LTP, PE: LTP − strike) and negative in it; the option's LTP is left off
+  until the live feed has it.
 
 ## What the parser does
 
@@ -48,7 +62,8 @@ These are header-name rules in `client/src/lib/columns.js`:
 
 ## Cell background colours
 
-Data cells keep their background colour (header cells keep the app's style). White counts as no fill.
+Data cells keep their background colour (header cells keep the app's style on screen, and their own colour in the
+JPEG export). White counts as no fill.
 
 - **Pasted from Excel / Google Sheets**: the colours as shown, including conditional formatting. They come from the
   clipboard's HTML copy, which is matched cell by cell against the pasted text; if they don't line up, a note says
@@ -208,15 +223,18 @@ from the computer running the server. The session lasts until Angel expires it, 
 
 | Method | Path | Body | Returns |
 | --- | --- | --- | --- |
-| POST | `/api/parse/text` | JSON `{ text, html? }` | `{ source, sheets: [{ name, columns, rows, notes, fills? }] }` |
+| POST | `/api/parse/text` | JSON `{ text, html? }` | `{ source, sheets: [{ name, columns, rows, notes, fills?, headerFills? }] }` |
 | POST | `/api/parse/file` | multipart, field `file` | same |
 | GET | `/api/greeks/stream?expiries=27OCT2026&quotes=27OCT2026:22050PE` | — | server-sent events: `status` `{ state, message, source, angelLogin }` (greeks), `feed` `{ state, message }` (WebSocket), `greeks` `{ expiry, fetchedAt, strikes: { '22050PE': { delta, iv } } }`, `ltps` `{ expiry, ltps: { '22050PE': price \| null } }` (changed strikes only) |
-| GET | `/api/daily/stream` | — | server-sent events: `status` `{ state, message, source, angelLogin }`, `daily` `{ symbol, updatedAt, date, ltp, today, prevDay, prevWeek, prevGreen, prevRed, allTimeHigh, low52Week, ema }` |
+| GET | `/api/daily/stream` | — | server-sent events: `status` `{ state, message, source, angelLogin }`, `daily` `{ symbol, updatedAt, date, ltp, today: { open, high, low, highAt, lowAt }, prevDay, prevWeek, prevGreen, prevRed, allTimeHigh, low52Week, ema }` |
 | POST | `/api/margin` | JSON `{ positions: [{ expiry: '27OCT2026', strike, type: 'CE' \| 'PE', quantity, buy }] }` | `{ source: 'upstox' \| 'angel' \| null, final, required, benefit, span, exposure, premium, legs, missing, skipped: [{ source, reason }], at }` (`final` is after the margin benefit; `source` is null when every position is offset). More than 50 legs is a 400, Angel One not logged in for 21–50 legs a 503 |
 | GET | `/api/lot-sizes?expiries=27OCT2026,03NOV2026` | — | `{ '27OCT2026': 65 }`, null for an expiry Angel One doesn't list |
 | POST | `/api/angel/login` | JSON `{ totp }` | `{ ok: true }` |
 
+`highAt` / `lowAt` are when today's high and low were made (ms since 1970, null when not known yet).
+
 `fills` is only present when some data cell has a colour. It has the same shape as `rows`, and each entry is
-`'#RRGGBB'` or `null`.
+`'#RRGGBB'` or `null`. `headerFills` (one entry per column, same format) is only present when some header cell has
+a colour.
 
 Errors come back as `{ error }` with status 400.

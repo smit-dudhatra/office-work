@@ -270,34 +270,54 @@ export async function nseQuote(token) {
   };
 }
 
-/** Daily candles of an instrument from `from` to `to` ("2026-10-30"), oldest first: [{ date, open, high, low, close }]. */
-export async function dailyCandles(exchange, token, from, to) {
+/**
+ * Rows of a candle request, oldest first: [timestamp, open, high, low, close, volume], the timestamp like
+ * 2026-10-30T09:15:00+05:30.
+ */
+async function candleRows(body) {
   for (let attempt = 1; ; attempt += 1) {
-    let data;
     try {
-      // Daily candles are stamped at midnight, so a 09:15 start would drop the first day
-      data = await securePost(ROUTES.candles, {
-        exchange,
-        symboltoken: token,
-        interval: 'ONE_DAY',
-        fromdate: `${from} 00:00`,
-        todate: `${to} 23:59`,
-      });
+      const data = await securePost(ROUTES.candles, body);
+      return Array.isArray(data) ? data : [];
     } catch (err) {
       if (err.code !== 'HTTP' || attempt >= CANDLE_ATTEMPTS) throw err;
-      continue;
     }
-    // Each row is [timestamp, open, high, low, close, volume], the timestamp like 2026-10-30T00:00:00+05:30
-    return (Array.isArray(data) ? data : [])
-      .map(([time, open, high, low, close]) => ({
-        date: String(time).slice(0, 10),
-        open: Number(open),
-        high: Number(high),
-        low: Number(low),
-        close: Number(close),
-      }))
-      .filter((candle) => [candle.open, candle.high, candle.low, candle.close].every((value) => value > 0));
   }
+}
+
+/** Daily candles of an instrument from `from` to `to` ("2026-10-30"), oldest first: [{ date, open, high, low, close }]. */
+export async function dailyCandles(exchange, token, from, to) {
+  // Daily candles are stamped at midnight, so a 09:15 start would drop the first day
+  const rows = await candleRows({
+    exchange,
+    symboltoken: token,
+    interval: 'ONE_DAY',
+    fromdate: `${from} 00:00`,
+    todate: `${to} 23:59`,
+  });
+  return rows
+    .map(([time, open, high, low, close]) => ({
+      date: String(time).slice(0, 10),
+      open: Number(open),
+      high: Number(high),
+      low: Number(low),
+      close: Number(close),
+    }))
+    .filter((candle) => [candle.open, candle.high, candle.low, candle.close].every((value) => value > 0));
+}
+
+/** One-minute candles of an instrument on `date` ("2026-10-30"), oldest first: [{ time (ms), high, low }]. */
+export async function minuteCandles(exchange, token, date) {
+  const rows = await candleRows({
+    exchange,
+    symboltoken: token,
+    interval: 'ONE_MINUTE',
+    fromdate: `${date} 09:15`,
+    todate: `${date} 15:30`,
+  });
+  return rows
+    .map(([time, , high, low]) => ({ time: Date.parse(time), high: Number(high), low: Number(low) }))
+    .filter((candle) => Number.isFinite(candle.time) && candle.high > 0 && candle.low > 0);
 }
 
 /** Angel One takes at most this many positions in one margin request. */

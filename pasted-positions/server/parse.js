@@ -248,10 +248,10 @@ function uniqueLabels(labels) {
 }
 
 /**
- * Turn a raw 2-D grid of cells into { name, columns, rows, notes, fills? }.
+ * Turn a raw 2-D grid of cells into { name, columns, rows, notes, fills?, headerFills? }.
  * Numeric columns hold numbers (or null), text columns hold strings.
  * `fillGrid` (same shape as `grid`) holds cell background colours; the table gets `fills`, shaped
- * like `rows`, only when a data cell has one.
+ * like `rows`, only when a data cell has one; `headerFills` (one per column) only when a header cell has one.
  * Returns null when there are no data rows.
  */
 function normalizeTable(grid, name, fillGrid) {
@@ -282,7 +282,7 @@ function normalizeTable(grid, name, fillGrid) {
 
   const hasHeader = rows[0].some((cell) => cell !== '' && parseNumber(cell) === null);
   const headerCells = hasHeader ? rows.shift() : [];
-  if (hasHeader) gridRows.shift();
+  const headerRow = hasHeader ? gridRows.shift() : null;
   const labels = uniqueLabels(keep.map((_, i) => headerCells[i] || `Column ${i + 1}`));
 
   const isTotal = rows.map((row) => TOTAL_ROW_RE.test(row.find((cell) => cell !== '') ?? ''));
@@ -315,5 +315,8 @@ function normalizeTable(grid, name, fillGrid) {
   const table = { name, columns, rows: data, notes };
   const fills = fillGrid && gridRows.map((r) => keep.map((c) => fillGrid[r]?.[c] ?? null));
   if (fills?.some((row) => row.some(Boolean))) table.fills = fills;
+  // Header colours aren't shown on screen (the header keeps the app's style), only in the JPEG snapshot
+  const headerFills = fillGrid && headerRow !== null && keep.map((c) => fillGrid[headerRow]?.[c] ?? null);
+  if (headerFills?.some(Boolean)) table.headerFills = headerFills;
   return table;
 }

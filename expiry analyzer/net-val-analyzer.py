@@ -17,6 +17,10 @@ Amount is the plain sum of Net Val, so premium on positions that are still
 open is included. Total Net Lots keeps its sign: shorts and longs cancel, and
 a fully closed expiry shows 0.
 
+After the summary, each expiry that still has an open position gets its own
+section listing Strike Price, Option Type (CE/PE) and Net Lots (positive =
+net long, negative = net short). Strikes that net to 0 lots are left out.
+
 The trade date comes from the file name ('1.xls', '29 September.xls') plus the
 month folder and year folder above it, falling back to the file's modified
 time when the name cannot be read.
@@ -118,18 +122,23 @@ def load_rows(folders, pattern=FILE_PATTERN):
     return rows, files_read, duplicates
 
 
-def summarize(rows):
-    """Return {expiry: {'amount', 'lots', 'first', 'last'}}."""
+def strike_totals(rows):
+    """Return ({(expiry, strike, option type): {'amount', 'lots'}},
+    {expiry: (first trade date, last trade date)})."""
     strikes = defaultdict(lambda: {'amount': 0.0, 'lots': 0})
     dates = {}
     for trade_date, expiry, row in rows:
         key = (expiry, to_float(row.get(COL_STRIKE)),
-               row.get(COL_OPT_TYPE, '').strip())
+               row.get(COL_OPT_TYPE, '').strip().upper())
         strikes[key]['amount'] += to_float(row.get(COL_NET_VAL))
         strikes[key]['lots'] += round(to_float(row.get(COL_NET_LOT)))
         first, last = dates.get(expiry, (trade_date, trade_date))
         dates[expiry] = (min(first, trade_date), max(last, trade_date))
+    return strikes, dates
 
+
+def summarize(strikes, dates):
+    """Return {expiry: {'amount', 'lots', 'first', 'last'}}."""
     expiries = {}
     for (expiry, _, _), totals in strikes.items():
         summary = expiries.setdefault(expiry, {
@@ -152,9 +161,14 @@ def show_expiry(expiry):
     return expiry.strftime('%d%b%Y').upper()
 
 
-def print_table(headers, rows, right=()):
+def show_strike(strike):
+    return f'{strike:g}'
+
+
+def print_table(headers, rows, right=(), footer=()):
     widths = [max(len(str(cell)) for cell in column)
-              for column in zip(headers, *rows)]
+              for column in zip(headers, *rows, *footer)]
+    rule = '  '.join('-' * width for width in widths)
 
     def line(cells):
         return '  '.join(str(cell).rjust(width) if i in right
@@ -162,9 +176,13 @@ def print_table(headers, rows, right=()):
                          for i, (cell, width) in enumerate(zip(cells, widths)))
 
     print(line(headers))
-    print('  '.join('-' * width for width in widths))
+    print(rule)
     for row in rows:
         print(line(row))
+    if footer:
+        print(rule)
+        for row in footer:
+            print(line(row))
 
 
 def print_summary(expiries):
@@ -178,6 +196,25 @@ def print_summary(expiries):
     print_table(('Expiry Date', 'Amount', 'First Day Position Found',
                  'Last Day Position Found', 'Total Net Lots'),
                 rows, right={1, 4})
+
+
+def print_open_positions(strikes):
+    """One section per expiry listing strikes whose net lots are not 0."""
+    open_by_expiry = defaultdict(list)
+    for (expiry, strike, opt_type), totals in sorted(strikes.items()):
+        if totals['lots']:
+            open_by_expiry[expiry].append((strike, opt_type, totals['lots']))
+
+    for expiry, positions in sorted(open_by_expiry.items()):
+        ce = sum(lots for _, opt_type, lots in positions if opt_type == 'CE')
+        pe = sum(lots for _, opt_type, lots in positions if opt_type == 'PE')
+        print(f'\nOPEN POSITION - {show_expiry(expiry)}')
+        print_table(('Strike Price', 'Option Type', 'Net Lots'),
+                    [(show_strike(strike), opt_type, lots)
+                     for strike, opt_type, lots in positions],
+                    right={0, 2},
+                    footer=[('CE total', '', ce), ('PE total', '', pe),
+                            ('TOTAL', '', ce + pe)])
 
 
 def main():
@@ -202,7 +239,9 @@ def main():
         print('No trades found.')
         return
 
-    print_summary(summarize(rows))
+    strikes, dates = strike_totals(rows)
+    print_summary(summarize(strikes, dates))
+    print_open_positions(strikes)
 
 
 if __name__ == '__main__':
